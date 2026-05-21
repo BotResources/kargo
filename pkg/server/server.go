@@ -100,14 +100,10 @@ type server struct {
 		client.ObjectList,
 		...client.ListOption,
 	) error
+	newDirectClientFn             directClientFactory
 	getAvailableFreightForStageFn func(
 		context.Context,
 		*kargoapi.Stage,
-	) ([]kargoapi.Freight, error)
-	getFreightFromWarehousesFn func(
-		ctx context.Context,
-		project string,
-		warehouses []string,
 	) ([]kargoapi.Freight, error)
 	getVerifiedFreightFn func(
 		ctx context.Context,
@@ -183,8 +179,8 @@ func NewServer(
 	s.createPromotionFn = kubeClient.Create
 	s.findDownstreamStagesFn = s.findDownstreamStages
 	s.listFreightFn = kubeClient.List
+	s.newDirectClientFn = client.New
 	s.getAvailableFreightForStageFn = s.getAvailableFreightForStage
-	s.getFreightFromWarehousesFn = s.getFreightFromWarehouses
 	s.getVerifiedFreightFn = s.getVerifiedFreight
 	s.patchFreightAliasFn = s.patchFreightAlias
 	s.patchFreightStatusFn = s.patchFreightStatus

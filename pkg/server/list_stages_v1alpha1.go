@@ -82,6 +82,7 @@ func (s *server) listStages(c *gin.Context) {
 	c.JSON(http.StatusOK, list)
 }
 
+// watchStages streams Stage changes through the REST SSE endpoint.
 func (s *server) watchStages(c *gin.Context, project string, warehouses []string, resourceVersion string) {
 	ctx := c.Request.Context()
 	logger := logging.LoggerFromContext(ctx)
@@ -92,6 +93,9 @@ func (s *server) watchStages(c *gin.Context, project string, warehouses []string
 		buildWatchListOptions(project, resourceVersion)...,
 	)
 	if err != nil {
+		if sendSSEWatchStartError(c, err) {
+			return
+		}
 		logger.Error(err, "failed to start watch")
 		_ = c.Error(fmt.Errorf("watch stages: %w", err))
 		return
@@ -119,17 +123,29 @@ func (s *server) watchStages(c *gin.Context, project string, warehouses []string
 				logger.Debug("watch channel closed")
 				return
 			}
+			if watchErr := errorFromWatchEvent(e); watchErr != nil {
+				sendSSEWatchError(c, watchErr)
+				return
+			}
 
 			stage, ok := convertWatchEventObject(c, e, (*kargoapi.Stage)(nil))
 			if !ok {
 				continue
 			}
 
-			if len(warehouses) > 0 && !api.StageMatchesAnyWarehouse(stage, warehouses) {
-				continue
+			eventType := e.Type
+			if len(warehouses) > 0 {
+				var send bool
+				eventType, send = filteredWatchEventType(
+					e.Type,
+					api.StageMatchesAnyWarehouse(stage, warehouses),
+				)
+				if !send {
+					continue
+				}
 			}
 
-			if !sendSSEWatchEvent(c, e.Type, stage) {
+			if !sendSSEWatchEvent(c, eventType, stage) {
 				return
 			}
 		}
@@ -139,8 +155,8 @@ func (s *server) watchStages(c *gin.Context, project string, warehouses []string
 // listStagesByWarehouses lists Stages in the given project, optionally
 // filtered to those that request Freight from at least one of the specified
 // warehouses (directly or through upstream stages). When warehouses is empty,
-// all Stages are returned. The returned StageList carries the ResourceVersion
-// from the underlying Kubernetes List call.
+// all Stages are returned. The returned StageList carries an effective
+// ResourceVersion from the underlying Kubernetes List call.
 func (s *server) listStagesByWarehouses(
 	ctx context.Context,
 	project string,
@@ -150,6 +166,7 @@ func (s *server) listStagesByWarehouses(
 	if err := s.listFresh(ctx, "stages", &list, client.InNamespace(project)); err != nil {
 		return nil, err
 	}
+	list.ResourceVersion = resourceVersionForStageList(&list)
 	if len(warehouses) == 0 {
 		return &list, nil
 	}
@@ -161,4 +178,14 @@ func (s *server) listStagesByWarehouses(
 	}
 	list.Items = stages
 	return &list, nil
+}
+
+// resourceVersionForStageList returns the list ResourceVersion when useful,
+// otherwise it falls back to the maximum Stage item ResourceVersion.
+func resourceVersionForStageList(list *kargoapi.StageList) string {
+	rvs := make([]string, len(list.Items))
+	for i := range list.Items {
+		rvs[i] = list.Items[i].ResourceVersion
+	}
+	return effectiveResourceVersion(list.ResourceVersion, rvs)
 }

@@ -138,17 +138,24 @@ func (s *server) QueryFreight(
 	}), nil
 }
 
+// listFreightForQuery lists Freight using the fresh direct-client path when it
+// is available, so callers can return a watchable resourceVersion.
 func (s *server) listFreightForQuery(
 	ctx context.Context,
 	list client.ObjectList,
 	opts ...client.ListOption,
 ) error {
 	if s.cfg.RestConfig == nil {
+		if s.listFreightFn == nil {
+			return s.client.List(ctx, list, opts...)
+		}
 		return s.listFreightFn(ctx, list, opts...)
 	}
 	return s.listFresh(ctx, "freights", list, opts...)
 }
 
+// filterFreightByOrigins returns Freight whose origin Warehouse is one of the
+// requested origins.
 func filterFreightByOrigins(
 	freight []kargoapi.Freight,
 	origins []string,
@@ -162,6 +169,8 @@ func filterFreightByOrigins(
 	return filtered
 }
 
+// resourceVersionForFreightList returns an effective list resourceVersion for
+// follow-up Freight watches.
 func resourceVersionForFreightList(list *kargoapi.FreightList) string {
 	rvs := make([]string, len(list.Items))
 	for i := range list.Items {
@@ -175,37 +184,6 @@ func (s *server) getAvailableFreightForStage(
 	stage *kargoapi.Stage,
 ) ([]kargoapi.Freight, error) {
 	return api.ListFreightAvailableToStage(ctx, s.client, stage)
-}
-
-func (s *server) getFreightFromWarehouses(
-	ctx context.Context,
-	project string,
-	warehouses []string,
-) ([]kargoapi.Freight, error) {
-	var allFreight []kargoapi.Freight
-	for _, warehouse := range warehouses {
-		var freight kargoapi.FreightList
-		if err := s.listFreightFn(
-			ctx,
-			&freight,
-			&client.ListOptions{
-				Namespace: project,
-				FieldSelector: fields.OneTermEqualSelector(
-					indexer.FreightByWarehouseField,
-					warehouse,
-				),
-			},
-		); err != nil {
-			return nil, fmt.Errorf(
-				"error listing Freight for Warehouse %q in namespace %q: %w",
-				warehouse,
-				project,
-				err,
-			)
-		}
-		allFreight = append(allFreight, freight.Items...)
-	}
-	return allFreight, nil
 }
 
 func (s *server) getVerifiedFreight(
@@ -460,22 +438,23 @@ func (s *server) queryFreight(c *gin.Context) {
 		}
 
 	case len(origins) > 0:
-		// Get freight from specific warehouses
-		freight, err = s.getFreightFromWarehousesREST(ctx, project, origins)
-		if err != nil {
-			_ = c.Error(fmt.Errorf("get freight from warehouses: %w", err))
+		freightList := &kargoapi.FreightList{}
+		if err := s.listFreightForQuery(ctx, freightList, client.InNamespace(project)); err != nil {
+			_ = c.Error(fmt.Errorf("list freight: %w", err))
 			return
 		}
+		freight = filterFreightByOrigins(freightList.Items, origins)
+		resourceVersion = resourceVersionForFreightList(freightList)
 
 	default:
 		// Get all freight in the project
 		freightList := &kargoapi.FreightList{}
-		if err := s.client.List(ctx, freightList, client.InNamespace(project)); err != nil {
+		if err := s.listFreightForQuery(ctx, freightList, client.InNamespace(project)); err != nil {
 			_ = c.Error(fmt.Errorf("list freight: %w", err))
 			return
 		}
 		freight = freightList.Items
-		resourceVersion = freightList.ResourceVersion
+		resourceVersion = resourceVersionForFreightList(freightList)
 	}
 
 	// Split the Freight into groups using the generic functions
@@ -503,36 +482,4 @@ func (s *server) queryFreight(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"groups": result, "resourceVersion": resourceVersion})
-}
-
-// getFreightFromWarehousesREST is a helper for the REST endpoint that gets freight from warehouses
-func (s *server) getFreightFromWarehousesREST(
-	ctx context.Context,
-	project string,
-	warehouses []string,
-) ([]kargoapi.Freight, error) {
-	var allFreight []kargoapi.Freight
-	for _, warehouse := range warehouses {
-		var freight kargoapi.FreightList
-		if err := s.client.List(
-			ctx,
-			&freight,
-			&client.ListOptions{
-				Namespace: project,
-				FieldSelector: fields.OneTermEqualSelector(
-					indexer.FreightByWarehouseField,
-					warehouse,
-				),
-			},
-		); err != nil {
-			return nil, fmt.Errorf(
-				"error listing Freight for Warehouse %q in namespace %q: %w",
-				warehouse,
-				project,
-				err,
-			)
-		}
-		allFreight = append(allFreight, freight.Items...)
-	}
-	return allFreight, nil
 }

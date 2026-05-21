@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -141,6 +142,47 @@ func TestWatchStages(t *testing.T) {
 	select {
 	case event := <-eventCh:
 		assert.Equal(t, Modified, event.Type)
+		assert.Equal(t, "test-stage", event.Object.Name)
+	case err := <-errCh:
+		t.Fatalf("unexpected error: %v", err)
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for event")
+	}
+}
+
+func TestWatchStagesWithResourceVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1beta1/projects/test-project/stages", r.URL.Path)
+		assert.Equal(t, "true", r.URL.Query().Get("watch"))
+		assert.Equal(t, "123", r.URL.Query().Get("resourceVersion"))
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+
+		event := watchEvent[*kargoapi.Stage]{
+			Type: string(Added),
+			Object: &kargoapi.Stage{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-stage"},
+			},
+		}
+		data, _ := json.Marshal(event)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, server.Client(), "test-token")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	eventCh, errCh := client.WatchStages(
+		ctx,
+		"test-project",
+		WithResourceVersion("123"),
+	)
+
+	select {
+	case event := <-eventCh:
+		assert.Equal(t, Added, event.Type)
 		assert.Equal(t, "test-stage", event.Object.Name)
 	case err := <-errCh:
 		t.Fatalf("unexpected error: %v", err)
@@ -505,6 +547,24 @@ data: {"type":"ADDED","object":{"name":"test"}}
 			expectedType: Added,
 			expectedName: "test",
 		},
+		{
+			name: "server error event",
+			input: `event: error
+data: {"code":"out_of_range","message":"watch resource version expired"}
+
+`,
+			expectError:   true,
+			errorContains: "watch error (out_of_range): watch resource version expired",
+		},
+		{
+			name: "server error event with invalid JSON",
+			input: `event: error
+data: {invalid json}
+
+`,
+			expectError:   true,
+			errorContains: "unmarshaling error event",
+		},
 	}
 
 	for _, tt := range tests {
@@ -532,6 +592,22 @@ data: {"type":"ADDED","object":{"name":"test"}}
 			}
 		})
 	}
+}
+
+func TestReadSSEStream_ErrorEvent(t *testing.T) {
+	reader := strings.NewReader(`event: error
+data: {"code":"out_of_range","message":"watch resource version expired"}
+
+`)
+	eventCh := make(chan Event[*testObject], 1)
+
+	err := readSSEStream(t.Context(), reader, eventCh)
+
+	require.Error(t, err)
+	var watchErr *Error
+	require.True(t, errors.As(err, &watchErr))
+	require.Equal(t, "out_of_range", watchErr.Code)
+	require.Equal(t, "watch resource version expired", watchErr.Message)
 }
 
 func TestReadSSEStream_ContextCancellation(t *testing.T) {

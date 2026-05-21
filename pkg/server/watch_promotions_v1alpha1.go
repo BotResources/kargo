@@ -28,7 +28,7 @@ func (s *server) WatchPromotions(
 
 	stage := req.Msg.GetStage()
 
-	if stage != "" {
+	if stage != "" && req.Msg.GetResourceVersion() == "" {
 		if err := s.client.Get(ctx, client.ObjectKey{
 			Namespace: project,
 			Name:      stage,
@@ -43,7 +43,7 @@ func (s *server) WatchPromotions(
 		buildWatchListOptions(project, req.Msg.GetResourceVersion())...,
 	)
 	if err != nil {
-		return fmt.Errorf("watch promotion: %w", err)
+		return fmt.Errorf("watch promotion: %w", errorFromWatchStartError(err))
 	}
 	defer w.Stop()
 	for {
@@ -63,14 +63,17 @@ func (s *server) WatchPromotions(
 			if !ok {
 				return fmt.Errorf("unexpected object type %T", e.Object)
 			}
-			// FIXME: Current (dynamic) client doesn't support filtering with indexed field by indexer,
-			// so manually filter stage here.
-			if stage != "" && stage != promotion.Spec.Stage {
-				continue
+			eventType := e.Type
+			if stage != "" {
+				var send bool
+				eventType, send = filteredWatchEventType(e.Type, stage == promotion.Spec.Stage)
+				if !send {
+					continue
+				}
 			}
 			if err = stream.Send(&svcv1alpha1.WatchPromotionsResponse{
 				Promotion: promotion,
-				Type:      string(e.Type),
+				Type:      string(eventType),
 			}); err != nil {
 				return fmt.Errorf("send response: %w", err)
 			}

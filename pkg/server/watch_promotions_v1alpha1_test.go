@@ -9,10 +9,12 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/rest"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -40,15 +42,7 @@ func TestWatchPromotions_resourceVersion(t *testing.T) {
 				_ client.ObjectList,
 				opts ...client.ListOption,
 			) (watch.Interface, error) {
-				var listOpts client.ListOptions
-				for _, opt := range opts {
-					opt.ApplyToList(&listOpts)
-				}
-				if listOpts.Raw == nil {
-					resourceVersionCh <- ""
-				} else {
-					resourceVersionCh <- listOpts.Raw.ResourceVersion
-				}
+				resourceVersionCh <- resourceVersionFromListOptions(opts...)
 
 				w := watch.NewFake()
 				go func() {
@@ -58,6 +52,7 @@ func TestWatchPromotions_resourceVersion(t *testing.T) {
 							Namespace: projectName,
 							Name:      "promotion-1",
 						},
+						Spec: kargoapi.PromotionSpec{Stage: "stage-1"},
 					})
 				}()
 				return w, nil
@@ -102,6 +97,7 @@ func TestWatchPromotions_resourceVersion(t *testing.T) {
 
 	stream, err := cli.WatchPromotions(ctx, connect.NewRequest(&svcv1alpha1.WatchPromotionsRequest{
 		Project:         projectName,
+		Stage:           ptr.To("stage-1"),
 		ResourceVersion: "123",
 	}))
 	require.NoError(t, err)
@@ -189,4 +185,115 @@ func TestWatchPromotions_expiredResourceVersion(t *testing.T) {
 	require.Error(t, stream.Err())
 	require.Equal(t, connect.CodeOutOfRange, connect.CodeOf(stream.Err()))
 	require.ErrorContains(t, stream.Err(), "watch resource version expired")
+}
+
+func TestWatchPromotions_expiredResourceVersionOnStart(t *testing.T) {
+	t.Parallel()
+
+	const projectName = "fake-project"
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(mustNewScheme()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Watch: func(
+				context.Context,
+				client.WithWatch,
+				client.ObjectList,
+				...client.ListOption,
+			) (watch.Interface, error) {
+				return nil, apierrors.NewResourceExpired("too old resource version: 123")
+			},
+		}).
+		Build()
+
+	k8sClient, err := kubernetes.NewClient(
+		t.Context(),
+		&rest.Config{},
+		kubernetes.ClientOptions{
+			SkipAuthorization: true,
+			NewInternalClient: func(
+				context.Context,
+				*rest.Config,
+				*runtime.Scheme,
+				string,
+			) (client.WithWatch, error) {
+				return fakeClient, nil
+			},
+		},
+	)
+	require.NoError(t, err)
+
+	svr := &server{client: k8sClient}
+	svr.externalValidateProjectFn = func(_ context.Context, _ client.Client, project string) error {
+		if project != projectName {
+			return validation.ErrProjectNotFound
+		}
+		return nil
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle(svcv1alpha1connect.NewKargoServiceHandler(svr))
+	httpSrv := httptest.NewServer(mux)
+	t.Cleanup(httpSrv.Close)
+
+	cli := svcv1alpha1connect.NewKargoServiceClient(httpSrv.Client(), httpSrv.URL)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	stream, err := cli.WatchPromotions(ctx, connect.NewRequest(&svcv1alpha1.WatchPromotionsRequest{
+		Project:         projectName,
+		ResourceVersion: "123",
+	}))
+	require.NoError(t, err)
+	require.False(t, stream.Receive())
+	require.Error(t, stream.Err())
+	require.Equal(t, connect.CodeOutOfRange, connect.CodeOf(stream.Err()))
+	require.ErrorContains(t, stream.Err(), "watch resource version expired")
+}
+
+func TestWatchPromotions_filteredModifiedEventSendsDelete(t *testing.T) {
+	t.Parallel()
+
+	const projectName = "fake-project"
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(mustNewScheme()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Watch: func(
+				context.Context,
+				client.WithWatch,
+				client.ObjectList,
+				...client.ListOption,
+			) (watch.Interface, error) {
+				w := watch.NewFake()
+				go func() {
+					time.Sleep(10 * time.Millisecond)
+					w.Modify(&kargoapi.Promotion{
+						ObjectMeta: metav1.ObjectMeta{
+							Namespace: projectName,
+							Name:      "promotion-1",
+						},
+						Spec: kargoapi.PromotionSpec{Stage: "stage-2"},
+					})
+				}()
+				return w, nil
+			},
+		}).
+		Build()
+
+	cli := newWatchTestClient(t, fakeClient)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	stream, err := cli.WatchPromotions(ctx, connect.NewRequest(&svcv1alpha1.WatchPromotionsRequest{
+		Project:         projectName,
+		Stage:           ptr.To("stage-1"),
+		ResourceVersion: "123",
+	}))
+	require.NoError(t, err)
+	require.True(t, stream.Receive())
+	require.Equal(t, "promotion-1", stream.Msg().GetPromotion().GetName())
+	require.Equal(t, string(watch.Deleted), stream.Msg().GetType())
 }

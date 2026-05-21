@@ -98,6 +98,7 @@ func (s *server) listPromotions(c *gin.Context) {
 	c.JSON(http.StatusOK, list)
 }
 
+// filterPromotionsByStage returns Promotions that target the specified Stage.
 func filterPromotionsByStage(promotions []kargoapi.Promotion, stage string) []kargoapi.Promotion {
 	filtered := make([]kargoapi.Promotion, 0, len(promotions))
 	for _, promotion := range promotions {
@@ -108,6 +109,7 @@ func filterPromotionsByStage(promotions []kargoapi.Promotion, stage string) []ka
 	return filtered
 }
 
+// watchPromotions streams Promotion changes through the REST SSE endpoint.
 func (s *server) watchPromotions(c *gin.Context, project, stage, resourceVersion string) {
 	ctx := c.Request.Context()
 	logger := logging.LoggerFromContext(ctx)
@@ -120,6 +122,9 @@ func (s *server) watchPromotions(c *gin.Context, project, stage, resourceVersion
 		buildWatchListOptions(project, resourceVersion)...,
 	)
 	if err != nil {
+		if sendSSEWatchStartError(c, err) {
+			return
+		}
 		logger.Error(err, "failed to start watch")
 		_ = c.Error(fmt.Errorf("watch promotions: %w", err))
 		return
@@ -147,18 +152,26 @@ func (s *server) watchPromotions(c *gin.Context, project, stage, resourceVersion
 				logger.Debug("watch channel closed")
 				return
 			}
+			if watchErr := errorFromWatchEvent(e); watchErr != nil {
+				sendSSEWatchError(c, watchErr)
+				return
+			}
 
 			promotion, ok := convertWatchEventObject(c, e, (*kargoapi.Promotion)(nil))
 			if !ok {
 				continue
 			}
 
-			// Filter by stage if specified (client-side filtering)
-			if stage != "" && promotion.Spec.Stage != stage {
-				continue
+			eventType := e.Type
+			if stage != "" {
+				var send bool
+				eventType, send = filteredWatchEventType(e.Type, promotion.Spec.Stage == stage)
+				if !send {
+					continue
+				}
 			}
 
-			if !sendSSEWatchEvent(c, e.Type, promotion) {
+			if !sendSSEWatchEvent(c, eventType, promotion) {
 				return
 			}
 		}

@@ -9,11 +9,14 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	svcv1alpha1 "github.com/akuity/kargo/api/service/v1alpha1"
 	"github.com/akuity/kargo/api/service/v1alpha1/svcv1alpha1connect"
@@ -21,6 +24,150 @@ import (
 	"github.com/akuity/kargo/pkg/server/kubernetes"
 	"github.com/akuity/kargo/pkg/server/validation"
 )
+
+func TestWatchStages_resourceVersion(t *testing.T) {
+	t.Parallel()
+
+	const projectName = watchTestProjectName
+
+	resourceVersionCh := make(chan string, 1)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(mustNewScheme()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Watch: func(
+				_ context.Context,
+				_ client.WithWatch,
+				_ client.ObjectList,
+				opts ...client.ListOption,
+			) (watch.Interface, error) {
+				resourceVersionCh <- resourceVersionFromListOptions(opts...)
+
+				w := watch.NewFake()
+				go func() {
+					time.Sleep(10 * time.Millisecond)
+					w.Add(&kargoapi.Stage{
+						ObjectMeta: metav1.ObjectMeta{
+							Namespace: projectName,
+							Name:      "stage-1",
+						},
+					})
+				}()
+				return w, nil
+			},
+		}).
+		Build()
+
+	cli := newWatchTestClient(t, fakeClient)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	stream, err := cli.WatchStages(ctx, connect.NewRequest(&svcv1alpha1.WatchStagesRequest{
+		Project:         projectName,
+		Name:            "stage-1",
+		ResourceVersion: "123",
+	}))
+	require.NoError(t, err)
+	require.True(t, stream.Receive())
+	require.Equal(t, "stage-1", stream.Msg().GetStage().GetName())
+
+	select {
+	case rv := <-resourceVersionCh:
+		require.Equal(t, "123", rv)
+	default:
+		require.Fail(t, "watch was not called")
+	}
+}
+
+func TestWatchStages_expiredResourceVersionOnStart(t *testing.T) {
+	t.Parallel()
+
+	const projectName = watchTestProjectName
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(mustNewScheme()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Watch: func(
+				context.Context,
+				client.WithWatch,
+				client.ObjectList,
+				...client.ListOption,
+			) (watch.Interface, error) {
+				return nil, apierrors.NewResourceExpired("too old resource version: 123")
+			},
+		}).
+		Build()
+
+	cli := newWatchTestClient(t, fakeClient)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	stream, err := cli.WatchStages(ctx, connect.NewRequest(&svcv1alpha1.WatchStagesRequest{
+		Project:         projectName,
+		ResourceVersion: "123",
+	}))
+	require.NoError(t, err)
+	require.False(t, stream.Receive())
+	require.Error(t, stream.Err())
+	require.Equal(t, connect.CodeOutOfRange, connect.CodeOf(stream.Err()))
+	require.ErrorContains(t, stream.Err(), "watch resource version expired")
+}
+
+func TestWatchStages_filteredModifiedEventSendsDelete(t *testing.T) {
+	t.Parallel()
+
+	const projectName = watchTestProjectName
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(mustNewScheme()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Watch: func(
+				context.Context,
+				client.WithWatch,
+				client.ObjectList,
+				...client.ListOption,
+			) (watch.Interface, error) {
+				w := watch.NewFake()
+				go func() {
+					time.Sleep(10 * time.Millisecond)
+					w.Modify(&kargoapi.Stage{
+						ObjectMeta: metav1.ObjectMeta{
+							Namespace: projectName,
+							Name:      "stage-1",
+						},
+						Spec: kargoapi.StageSpec{
+							RequestedFreight: []kargoapi.FreightRequest{{
+								Origin: kargoapi.FreightOrigin{
+									Kind: kargoapi.FreightOriginKindWarehouse,
+									Name: "warehouse-2",
+								},
+								Sources: kargoapi.FreightSources{Direct: true},
+							}},
+						},
+					})
+				}()
+				return w, nil
+			},
+		}).
+		Build()
+
+	cli := newWatchTestClient(t, fakeClient)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	stream, err := cli.WatchStages(ctx, connect.NewRequest(&svcv1alpha1.WatchStagesRequest{
+		Project:         projectName,
+		FreightOrigins:  []string{"warehouse-1"},
+		ResourceVersion: "123",
+	}))
+	require.NoError(t, err)
+	require.True(t, stream.Receive())
+	require.Equal(t, "stage-1", stream.Msg().GetStage().GetName())
+	require.Equal(t, string(watch.Deleted), stream.Msg().GetType())
+}
 
 func TestWatchStages(t *testing.T) {
 	const projectName = "fake-project"

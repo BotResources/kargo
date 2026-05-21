@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"strings"
 
 	"github.com/hashicorp/go-cleanhttp"
@@ -37,6 +38,22 @@ type Client struct {
 	token      string
 }
 
+// Option configures a REST watch request.
+type Option func(*watchOptions)
+
+// watchOptions is the resolved configuration for a REST watch request.
+type watchOptions struct {
+	resourceVersion string
+}
+
+// WithResourceVersion starts a watch from the provided Kubernetes resource
+// version instead of replaying all existing resources.
+func WithResourceVersion(resourceVersion string) Option {
+	return func(opts *watchOptions) {
+		opts.resourceVersion = resourceVersion
+	}
+}
+
 // NewClient creates a new watch client.
 func NewClient(baseURL string, httpClient *http.Client, token string) *Client {
 	if httpClient == nil {
@@ -55,9 +72,13 @@ func (c *Client) WatchStage(
 	ctx context.Context,
 	project string,
 	stage string,
+	opts ...Option,
 ) (<-chan Event[*kargoapi.Stage], <-chan error) {
-	url := fmt.Sprintf("%s/v1beta1/projects/%s/stages/%s?watch=true", c.baseURL, project, stage)
-	return watchResource[*kargoapi.Stage](ctx, c, url)
+	return watchResource[*kargoapi.Stage](
+		ctx,
+		c,
+		watchURL(c.baseURL, fmt.Sprintf("/v1beta1/projects/%s/stages/%s", project, stage), opts...),
+	)
 }
 
 // WatchWarehouses watches all Warehouses in a project for changes. Cancel the
@@ -65,9 +86,13 @@ func (c *Client) WatchStage(
 func (c *Client) WatchWarehouses(
 	ctx context.Context,
 	project string,
+	opts ...Option,
 ) (<-chan Event[*kargoapi.Warehouse], <-chan error) {
-	url := fmt.Sprintf("%s/v1beta1/projects/%s/warehouses?watch=true", c.baseURL, project)
-	return watchResource[*kargoapi.Warehouse](ctx, c, url)
+	return watchResource[*kargoapi.Warehouse](
+		ctx,
+		c,
+		watchURL(c.baseURL, fmt.Sprintf("/v1beta1/projects/%s/warehouses", project), opts...),
+	)
 }
 
 // WatchStages watches all Stages in a project for changes. Cancel the provided
@@ -75,9 +100,13 @@ func (c *Client) WatchWarehouses(
 func (c *Client) WatchStages(
 	ctx context.Context,
 	project string,
+	opts ...Option,
 ) (<-chan Event[*kargoapi.Stage], <-chan error) {
-	url := fmt.Sprintf("%s/v1beta1/projects/%s/stages?watch=true", c.baseURL, project)
-	return watchResource[*kargoapi.Stage](ctx, c, url)
+	return watchResource[*kargoapi.Stage](
+		ctx,
+		c,
+		watchURL(c.baseURL, fmt.Sprintf("/v1beta1/projects/%s/stages", project), opts...),
+	)
 }
 
 // WatchPromotions watches all Promotions in a project for changes. Cancel the
@@ -85,9 +114,13 @@ func (c *Client) WatchStages(
 func (c *Client) WatchPromotions(
 	ctx context.Context,
 	project string,
+	opts ...Option,
 ) (<-chan Event[*kargoapi.Promotion], <-chan error) {
-	url := fmt.Sprintf("%s/v1beta1/projects/%s/promotions?watch=true", c.baseURL, project)
-	return watchResource[*kargoapi.Promotion](ctx, c, url)
+	return watchResource[*kargoapi.Promotion](
+		ctx,
+		c,
+		watchURL(c.baseURL, fmt.Sprintf("/v1beta1/projects/%s/promotions", project), opts...),
+	)
 }
 
 // WatchWarehouse watches a specific Warehouse for changes. Cancel the provided
@@ -96,9 +129,17 @@ func (c *Client) WatchWarehouse(
 	ctx context.Context,
 	project string,
 	warehouse string,
+	opts ...Option,
 ) (<-chan Event[*kargoapi.Warehouse], <-chan error) {
-	url := fmt.Sprintf("%s/v1beta1/projects/%s/warehouses/%s?watch=true", c.baseURL, project, warehouse)
-	return watchResource[*kargoapi.Warehouse](ctx, c, url)
+	return watchResource[*kargoapi.Warehouse](
+		ctx,
+		c,
+		watchURL(
+			c.baseURL,
+			fmt.Sprintf("/v1beta1/projects/%s/warehouses/%s", project, warehouse),
+			opts...,
+		),
+	)
 }
 
 // WatchPromotion watches a specific Promotion for changes. Cancel the provided
@@ -107,9 +148,17 @@ func (c *Client) WatchPromotion(
 	ctx context.Context,
 	project string,
 	promotion string,
+	opts ...Option,
 ) (<-chan Event[*kargoapi.Promotion], <-chan error) {
-	url := fmt.Sprintf("%s/v1beta1/projects/%s/promotions/%s?watch=true", c.baseURL, project, promotion)
-	return watchResource[*kargoapi.Promotion](ctx, c, url)
+	return watchResource[*kargoapi.Promotion](
+		ctx,
+		c,
+		watchURL(
+			c.baseURL,
+			fmt.Sprintf("/v1beta1/projects/%s/promotions/%s", project, promotion),
+			opts...,
+		),
+	)
 }
 
 // WatchProjectConfig watches the ProjectConfig for a specific project. Cancel
@@ -117,24 +166,66 @@ func (c *Client) WatchPromotion(
 func (c *Client) WatchProjectConfig(
 	ctx context.Context,
 	project string,
+	opts ...Option,
 ) (<-chan Event[*kargoapi.ProjectConfig], <-chan error) {
-	url := fmt.Sprintf("%s/v1beta1/projects/%s/config?watch=true", c.baseURL, project)
-	return watchResource[*kargoapi.ProjectConfig](ctx, c, url)
+	return watchResource[*kargoapi.ProjectConfig](
+		ctx,
+		c,
+		watchURL(c.baseURL, fmt.Sprintf("/v1beta1/projects/%s/config", project), opts...),
+	)
 }
 
 // WatchClusterConfig watches the ClusterConfig. Cancel the provided context to
 // stop watching.
 func (c *Client) WatchClusterConfig(
 	ctx context.Context,
+	opts ...Option,
 ) (<-chan Event[*kargoapi.ClusterConfig], <-chan error) {
-	url := fmt.Sprintf("%s/v1beta1/cluster-config?watch=true", c.baseURL)
-	return watchResource[*kargoapi.ClusterConfig](ctx, c, url)
+	return watchResource[*kargoapi.ClusterConfig](
+		ctx,
+		c,
+		watchURL(c.baseURL, "/v1beta1/cluster-config", opts...),
+	)
 }
 
 // watchEvent is the generic JSON structure for all watch events.
 type watchEvent[T any] struct {
 	Type   string `json:"type"`
 	Object T      `json:"object"`
+}
+
+// sseErrorEvent is the JSON payload used by server watch endpoints for
+// terminal SSE error events.
+type sseErrorEvent struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// Error is a terminal error reported by a Kargo SSE watch stream.
+type Error struct {
+	Code    string
+	Message string
+}
+
+func (e *Error) Error() string {
+	if e.Code == "" {
+		return fmt.Sprintf("watch error: %s", e.Message)
+	}
+	return fmt.Sprintf("watch error (%s): %s", e.Code, e.Message)
+}
+
+func watchURL(baseURL, path string, opts ...Option) string {
+	options := watchOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	values := neturl.Values{}
+	values.Set("watch", "true")
+	if options.resourceVersion != "" {
+		values.Set("resourceVersion", options.resourceVersion)
+	}
+	return fmt.Sprintf("%s%s?%s", baseURL, path, values.Encode())
 }
 
 // doSSERequest executes an SSE request and calls the provided handler with the
@@ -219,16 +310,22 @@ func readSSEStream[T any](
 
 		eventBlock := scanner.Text()
 
-		// Parse lines within the event block
+		// Parse lines within the event block.
+		var eventType string
 		var dataLines []string
 		for _, line := range strings.Split(eventBlock, "\n") {
 			// Skip comments (keepalives)
 			if strings.HasPrefix(line, ":") {
 				continue
 			}
+			if strings.HasPrefix(line, "event:") {
+				eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+				continue
+			}
 			// Collect data lines
-			if strings.HasPrefix(line, "data: ") {
-				dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
+			if strings.HasPrefix(line, "data:") {
+				data := strings.TrimPrefix(line, "data:")
+				dataLines = append(dataLines, strings.TrimPrefix(data, " "))
 			}
 		}
 
@@ -238,6 +335,14 @@ func readSSEStream[T any](
 
 		// Join multiple data lines per SSE spec
 		data := strings.Join(dataLines, "\n")
+
+		if eventType == "error" {
+			var event sseErrorEvent
+			if err := json.Unmarshal([]byte(data), &event); err != nil {
+				return fmt.Errorf("unmarshaling error event: %w", err)
+			}
+			return &Error{Code: event.Code, Message: event.Message}
+		}
 
 		var event watchEvent[T]
 		if err := json.Unmarshal([]byte(data), &event); err != nil {

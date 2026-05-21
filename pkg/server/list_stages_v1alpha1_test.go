@@ -10,8 +10,10 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -490,6 +492,45 @@ func Test_server_listStages(t *testing.T) {
 					require.Len(t, stages.Items, 2)
 				},
 			},
+			{
+				name: "sets effective resourceVersion",
+				clientBuilder: fake.NewClientBuilder().
+					WithObjects(
+						testProject,
+						&kargoapi.Stage{
+							ObjectMeta: metav1.ObjectMeta{
+								Namespace: testProject.Name,
+								Name:      "stage-1",
+							},
+						},
+					).
+					WithInterceptorFuncs(interceptor.Funcs{
+						List: func(
+							ctx context.Context,
+							cl client.WithWatch,
+							list client.ObjectList,
+							opts ...client.ListOption,
+						) error {
+							if err := cl.List(ctx, list, opts...); err != nil {
+								return err
+							}
+							if sl, ok := list.(*kargoapi.StageList); ok {
+								sl.ResourceVersion = "0"
+								for i := range sl.Items {
+									sl.Items[i].ResourceVersion = "100"
+								}
+							}
+							return nil
+						},
+					}),
+				assertions: func(t *testing.T, w *httptest.ResponseRecorder, _ client.Client) {
+					require.Equal(t, http.StatusOK, w.Code)
+					stages := &kargoapi.StageList{}
+					err := json.Unmarshal(w.Body.Bytes(), stages)
+					require.NoError(t, err)
+					require.Equal(t, "100", stages.ResourceVersion)
+				},
+			},
 		},
 	)
 }
@@ -633,6 +674,30 @@ func Test_server_listStages_watch(t *testing.T) {
 
 					// Verify SSE headers are set
 					require.Equal(t, "text/event-stream", w.Header().Get("Content-Type"))
+				},
+			},
+			{
+				name: "reports expired resourceVersion startup error as SSE error",
+				url:  "/v1beta1/projects/" + projectName + "/stages?watch=true&resourceVersion=123",
+				clientBuilder: fake.NewClientBuilder().
+					WithObjects(&kargoapi.Project{
+						ObjectMeta: metav1.ObjectMeta{Name: projectName},
+					}).
+					WithInterceptorFuncs(interceptor.Funcs{
+						Watch: func(
+							_ context.Context,
+							_ client.WithWatch,
+							_ client.ObjectList,
+							_ ...client.ListOption,
+						) (watch.Interface, error) {
+							return nil, apierrors.NewResourceExpired("too old resource version: 123")
+						},
+					}),
+				assertions: func(t *testing.T, w *httptest.ResponseRecorder, _ client.Client) {
+					require.Equal(t, http.StatusOK, w.Code)
+					require.Equal(t, "text/event-stream", w.Header().Get("Content-Type"))
+					require.Contains(t, w.Body.String(), "event: error")
+					require.Contains(t, w.Body.String(), "watch resource version expired")
 				},
 			},
 		},

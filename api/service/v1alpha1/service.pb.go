@@ -4711,9 +4711,10 @@ type QueryFreightResponse struct {
 
 	// groups maps group names to their corresponding freight lists.
 	Groups map[string]*FreightList `protobuf:"bytes,1,rep,name=groups,proto3" json:"groups,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
-	// resource_version is the Kubernetes ListMeta.resourceVersion of the
-	// underlying list, populated only when no stage or origin filters are
-	// applied. Suitable for use as a starting point for Watch calls.
+	// resource_version is the effective resource version of the underlying
+	// Freight list for list-backed queries, including origin-filtered queries.
+	// It is empty for stage-derived availability queries. Suitable for use as a
+	// starting point for Watch calls.
 	ResourceVersion string `protobuf:"bytes,2,opt,name=resource_version,json=resourceVersion,proto3" json:"resource_version,omitempty"`
 }
 

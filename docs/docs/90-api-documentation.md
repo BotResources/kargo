@@ -1141,7 +1141,7 @@ Stability is not guaranteed.
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | groups | [QueryFreightResponse.GroupsEntry](#akuity-io-kargo-service-v1alpha1-QueryFreightResponse-GroupsEntry) |  groups maps group names to their corresponding freight lists. |
-| resource_version | string |  resource_version is the Kubernetes ListMeta.resourceVersion of the underlying list, populated only when no stage or origin filters are applied. Suitable for use as a starting point for Watch calls. |
+| resource_version | string |  resource_version is the effective resource version of the underlying Freight list for list-backed queries, including origin-filtered queries. It is empty for stage-derived availability queries. Suitable for use as a starting point for Watch calls. |
 
 
 ### QueryFreightResponse.GroupsEntry {#akuity-io-kargo-service-v1alpha1-QueryFreightResponse-GroupsEntry}

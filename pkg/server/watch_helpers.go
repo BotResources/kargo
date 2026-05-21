@@ -2,11 +2,13 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
 	"connectrpc.com/connect"
 	"github.com/gin-gonic/gin"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -62,6 +64,8 @@ func convertWatchEventObject[T any](c *gin.Context, e watch.Event, _ T) (T, bool
 	return obj, true
 }
 
+// errorFromWatchEvent maps Kubernetes watch.Error events into client-visible
+// errors that watch handlers can return or stream.
 func errorFromWatchEvent(e watch.Event) error {
 	if e.Type != watch.Error {
 		return nil
@@ -91,17 +95,93 @@ func errorFromWatchEvent(e watch.Event) error {
 	)
 }
 
+// errorFromWatchStartError maps startup failures from Kubernetes Watch calls
+// into the same Connect errors used for watch.Error events.
+func errorFromWatchStartError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if !apierrors.IsResourceExpired(err) {
+		return err
+	}
+	return connect.NewError(
+		connect.CodeOutOfRange,
+		fmt.Errorf("watch resource version expired: %s", err.Error()),
+	)
+}
+
+// sendSSEWatchError sends a watch error as an SSE error event. Watch endpoints
+// may have already sent response headers, so HTTP status codes are no longer a
+// reliable way to report expired resource versions after streaming begins.
+func sendSSEWatchError(c *gin.Context, err error) {
+	logger := logging.LoggerFromContext(c.Request.Context())
+
+	message := err.Error()
+	var connectErr *connect.Error
+	if errors.As(err, &connectErr) {
+		message = connectErr.Message()
+	}
+
+	event := struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}{
+		Code:    connect.CodeOf(err).String(),
+		Message: message,
+	}
+	data, marshalErr := json.Marshal(event)
+	if marshalErr != nil {
+		logger.Error(marshalErr, "failed to marshal watch error event")
+		return
+	}
+	if _, writeErr := fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", data); writeErr != nil {
+		logger.Debug("failed to write watch error event", "error", writeErr)
+		return
+	}
+	c.Writer.Flush()
+}
+
+// sendSSEWatchStartError sends startup watch errors that are part of the watch
+// protocol as SSE error events. It returns true when the error was handled.
+func sendSSEWatchStartError(c *gin.Context, err error) bool {
+	watchErr := errorFromWatchStartError(err)
+	if connect.CodeOf(watchErr) != connect.CodeOutOfRange {
+		return false
+	}
+	setSSEHeaders(c)
+	sendSSEWatchError(c, watchErr)
+	return true
+}
+
 // convertAndSendWatchEvent converts a watch event's object to the target type
 // and sends it as an SSE event. It handles both unstructured objects (from real
 // clients) and typed objects (from fake clients in tests). Returns true if the
 // caller should continue processing (including on conversion errors), false if
 // the watch should be terminated (write failure).
 func convertAndSendWatchEvent[T any](c *gin.Context, e watch.Event, target T) bool {
+	if err := errorFromWatchEvent(e); err != nil {
+		sendSSEWatchError(c, err)
+		return false
+	}
 	obj, ok := convertWatchEventObject(c, e, target)
 	if !ok {
 		return true // continue processing, don't terminate watch
 	}
 	return sendSSEWatchEvent(c, e.Type, obj)
+}
+
+// filteredWatchEventType returns the event type to send for a client-side
+// filtered watch event. Kubernetes server-side selectors send a DELETED event
+// when a previously matching object is modified so it no longer matches; this
+// helper mirrors that behavior for filters we must evaluate in-process.
+func filteredWatchEventType(eventType watch.EventType, matches bool) (watch.EventType, bool) {
+	if matches {
+		return eventType, true
+	}
+	if eventType == watch.Modified {
+		return watch.Deleted, true
+	}
+	return "", false
 }
 
 // sendSSEWatchEvent sends an object as an SSE watch event. Returns true if

@@ -1,0 +1,140 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+
+	kargoapi "github.com/akuity/kargo/api/v1alpha1"
+	"github.com/akuity/kargo/pkg/server/config"
+	"github.com/akuity/kargo/pkg/server/kubernetes"
+)
+
+func TestServer_listFresh(t *testing.T) {
+	t.Parallel()
+
+	scheme := mustNewScheme()
+	internalClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	kubeClient, err := kubernetes.NewClient(
+		t.Context(),
+		&rest.Config{},
+		kubernetes.ClientOptions{
+			SkipAuthorization: true,
+			Scheme:            scheme,
+			NewInternalClient: func(
+				_ context.Context,
+				_ *rest.Config,
+				_ *runtime.Scheme,
+				_ string,
+			) (client.WithWatch, error) {
+				return internalClient, nil
+			},
+		},
+	)
+	require.NoError(t, err)
+
+	t.Run("authorizes and lists through direct client", func(t *testing.T) {
+		t.Parallel()
+
+		var authorized bool
+		var authorizedGVR schema.GroupVersionResource
+		var authorizedKey client.ObjectKey
+		var directListCalled bool
+
+		s := &server{
+			cfg:    config.ServerConfig{RestConfig: &rest.Config{}},
+			client: kubeClient,
+			authorizeFn: func(
+				_ context.Context,
+				verb string,
+				gvr schema.GroupVersionResource,
+				subresource string,
+				key client.ObjectKey,
+			) error {
+				require.Equal(t, "list", verb)
+				require.Empty(t, subresource)
+				authorized = true
+				authorizedGVR = gvr
+				authorizedKey = key
+				return nil
+			},
+			newDirectClientFn: func(*rest.Config, client.Options) (client.Client, error) {
+				return fake.NewClientBuilder().
+					WithScheme(scheme).
+					WithInterceptorFuncs(interceptor.Funcs{
+						List: func(
+							ctx context.Context,
+							cl client.WithWatch,
+							list client.ObjectList,
+							opts ...client.ListOption,
+						) error {
+							directListCalled = true
+							if err := cl.List(ctx, list, opts...); err != nil {
+								return err
+							}
+							if promotions, ok := list.(*kargoapi.PromotionList); ok {
+								promotions.ResourceVersion = "42"
+							}
+							return nil
+						},
+					}).
+					Build(), nil
+			},
+		}
+
+		promotions := &kargoapi.PromotionList{}
+		err := s.listFresh(
+			t.Context(),
+			"promotions",
+			promotions,
+			client.InNamespace("fake-project"),
+		)
+		require.NoError(t, err)
+		require.True(t, authorized)
+		require.True(t, directListCalled)
+		require.Equal(t, kargoapi.GroupVersion.WithResource("promotions"), authorizedGVR)
+		require.Equal(t, client.ObjectKey{Namespace: "fake-project"}, authorizedKey)
+		require.Equal(t, "42", promotions.ResourceVersion)
+	})
+
+	t.Run("authorization failure prevents direct list", func(t *testing.T) {
+		t.Parallel()
+
+		authErr := errors.New("not authorized")
+		var directListCalled bool
+		s := &server{
+			cfg:    config.ServerConfig{RestConfig: &rest.Config{}},
+			client: kubeClient,
+			authorizeFn: func(
+				context.Context,
+				string,
+				schema.GroupVersionResource,
+				string,
+				client.ObjectKey,
+			) error {
+				return authErr
+			},
+			newDirectClientFn: func(*rest.Config, client.Options) (client.Client, error) {
+				directListCalled = true
+				return fake.NewClientBuilder().WithScheme(scheme).Build(), nil
+			},
+		}
+
+		err := s.listFresh(
+			t.Context(),
+			"promotions",
+			&kargoapi.PromotionList{},
+			client.InNamespace("fake-project"),
+		)
+		require.ErrorIs(t, err, authErr)
+		require.False(t, directListCalled)
+	})
+}

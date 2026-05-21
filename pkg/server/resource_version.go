@@ -40,6 +40,8 @@ func effectiveResourceVersion(rv string, itemVersions []string) string {
 	return strconv.FormatInt(maxRV, 10)
 }
 
+// effectiveResourceVersionFromObjects extracts item resource versions and
+// delegates to effectiveResourceVersion.
 func effectiveResourceVersionFromObjects[T metav1.Object](rv string, items []T) string {
 	itemVersions := make([]string, len(items))
 	for i, item := range items {
@@ -48,6 +50,8 @@ func effectiveResourceVersionFromObjects[T metav1.Object](rv string, items []T) 
 	return effectiveResourceVersion(rv, itemVersions)
 }
 
+// buildWatchListOptions returns namespace-scoped list options for watch calls,
+// including ResourceVersion when the caller has one.
 func buildWatchListOptions(
 	namespace string,
 	resourceVersion string,

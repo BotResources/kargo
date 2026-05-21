@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -318,6 +319,55 @@ func TestQueryFreight(t *testing.T) {
 		},
 
 		{
+			name: "resource_version is returned for origin-filtered list",
+			req: &svcv1alpha1.QueryFreightRequest{
+				Project: "fake-project",
+				Origins: []string{"warehouse-a"},
+			},
+			server: &server{
+				validateProjectExistsFn: func(context.Context, string) error {
+					return nil
+				},
+				listFreightFn: func(
+					_ context.Context,
+					objList client.ObjectList,
+					_ ...client.ListOption,
+				) error {
+					freight, ok := objList.(*kargoapi.FreightList)
+					require.True(t, ok)
+					freight.ResourceVersion = "0"
+					freight.Items = []kargoapi.Freight{
+						{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:            "freight-a",
+								ResourceVersion: "11",
+							},
+							Origin: kargoapi.FreightOrigin{Name: "warehouse-a"},
+						},
+						{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:            "freight-b",
+								ResourceVersion: "22",
+							},
+							Origin: kargoapi.FreightOrigin{Name: "warehouse-b"},
+						},
+					}
+					return nil
+				},
+			},
+			assertions: func(
+				t *testing.T,
+				res *connect.Response[svcv1alpha1.QueryFreightResponse],
+				err error,
+			) {
+				require.NoError(t, err)
+				require.Equal(t, "22", res.Msg.GetResourceVersion())
+				require.Len(t, res.Msg.GetGroups()[""].Freight, 1)
+				require.Equal(t, "freight-a", res.Msg.GetGroups()[""].Freight[0].GetName())
+			},
+		},
+
+		{
 			name: "resource_version is empty when filtered by stage",
 			req: &svcv1alpha1.QueryFreightRequest{
 				Project: "fake-project",
@@ -424,71 +474,6 @@ func TestQueryFreight(t *testing.T) {
 				connect.NewRequest(testCase.req),
 			)
 			testCase.assertions(t, res, err)
-		})
-	}
-}
-
-func TestGetFreightFromWarehouse(t *testing.T) {
-	testCases := []struct {
-		name       string
-		server     *server
-		assertions func(*testing.T, []kargoapi.Freight, error)
-	}{
-		{
-			name: "error listing Freight",
-			server: &server{
-				listFreightFn: func(
-					context.Context,
-					client.ObjectList,
-					...client.ListOption,
-				) error {
-					return errors.New("something went wrong")
-				},
-			},
-			assertions: func(t *testing.T, _ []kargoapi.Freight, err error) {
-				require.ErrorContains(t, err, "something went wrong")
-				require.ErrorContains(t, err, "error listing Freight for Warehouse")
-			},
-		},
-		{
-			name: "success",
-			server: &server{
-				listFreightFn: func(
-					_ context.Context,
-					objList client.ObjectList,
-					_ ...client.ListOption,
-				) error {
-					freight, ok := objList.(*kargoapi.FreightList)
-					require.True(t, ok)
-					freight.Items = []kargoapi.Freight{
-						{
-							ObjectMeta: metav1.ObjectMeta{
-								Name: "fake-freight",
-							},
-						},
-						{
-							ObjectMeta: metav1.ObjectMeta{
-								Name: "another-fake-freight",
-							},
-						},
-					}
-					return nil
-				},
-			},
-			assertions: func(t *testing.T, freight []kargoapi.Freight, err error) {
-				require.NoError(t, err)
-				require.Len(t, freight, 2)
-			},
-		},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			freight, err := testCase.server.getFreightFromWarehouses(
-				t.Context(),
-				"fake-project",
-				[]string{"fake-warehouse"},
-			)
-			testCase.assertions(t, freight, err)
 		})
 	}
 }
@@ -925,6 +910,58 @@ func Test_server_queryFreight(t *testing.T) {
 					var body map[string]any
 					require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 					require.Equal(t, "99", body["resourceVersion"])
+				},
+			},
+			{
+				name: "resource_version is returned in response for origin-filtered list",
+				url: "/v1beta1/projects/" + testProject.Name +
+					"/freight?origins=" + testWarehouse.Name,
+				clientBuilder: fake.NewClientBuilder().
+					WithObjects(
+						testProject,
+						testFreight1,
+						testFreight2,
+						&kargoapi.Freight{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      "other-freight",
+								Namespace: testProject.Name,
+							},
+							Origin: kargoapi.FreightOrigin{
+								Kind: kargoapi.FreightOriginKindWarehouse,
+								Name: "other-warehouse",
+							},
+						},
+					).
+					WithInterceptorFuncs(interceptor.Funcs{
+						List: func(
+							ctx context.Context,
+							cl client.WithWatch,
+							list client.ObjectList,
+							opts ...client.ListOption,
+						) error {
+							if err := cl.List(ctx, list, opts...); err != nil {
+								return err
+							}
+							if fl, ok := list.(*kargoapi.FreightList); ok {
+								fl.ResourceVersion = "0"
+								for i := range fl.Items {
+									fl.Items[i].ResourceVersion = fmt.Sprintf("%d", i+10)
+								}
+							}
+							return nil
+						},
+					}),
+				assertions: func(t *testing.T, w *httptest.ResponseRecorder, _ client.Client) {
+					require.Equal(t, http.StatusOK, w.Code)
+					var body struct {
+						Groups map[string]struct {
+							Items []kargoapi.Freight `json:"items"`
+						} `json:"groups"`
+						ResourceVersion string `json:"resourceVersion"`
+					}
+					require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+					require.Equal(t, "12", body.ResourceVersion)
+					require.Len(t, body.Groups[""].Items, 2)
 				},
 			},
 		},

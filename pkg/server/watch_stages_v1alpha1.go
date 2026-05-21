@@ -30,7 +30,7 @@ func (s *server) WatchStages(
 	name := req.Msg.GetName()
 	warehouses := req.Msg.GetFreightOrigins()
 
-	if name != "" {
+	if name != "" && req.Msg.GetResourceVersion() == "" {
 		if err := s.client.Get(ctx, libClient.ObjectKey{
 			Namespace: project,
 			Name:      name,
@@ -49,7 +49,7 @@ func (s *server) WatchStages(
 		buildWatchListOptions(project, req.Msg.GetResourceVersion(), opts...)...,
 	)
 	if err != nil {
-		return fmt.Errorf("watch stage: %w", err)
+		return fmt.Errorf("watch stage: %w", errorFromWatchStartError(err))
 	}
 	defer w.Stop()
 	for {
@@ -69,12 +69,20 @@ func (s *server) WatchStages(
 			if !ok {
 				return fmt.Errorf("unexpected object type %T", e.Object)
 			}
-			if len(warehouses) > 0 && !api.StageMatchesAnyWarehouse(stage, warehouses) {
-				continue
+			eventType := e.Type
+			if len(warehouses) > 0 {
+				var send bool
+				eventType, send = filteredWatchEventType(
+					e.Type,
+					api.StageMatchesAnyWarehouse(stage, warehouses),
+				)
+				if !send {
+					continue
+				}
 			}
 			if err := stream.Send(&svcv1alpha1.WatchStagesResponse{
 				Stage: stage,
-				Type:  string(e.Type),
+				Type:  string(eventType),
 			}); err != nil {
 				return fmt.Errorf("send response: %w", err)
 			}

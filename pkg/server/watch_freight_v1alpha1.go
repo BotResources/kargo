@@ -34,7 +34,7 @@ func (s *server) WatchFreight(
 		buildWatchListOptions(project, req.Msg.GetResourceVersion())...,
 	)
 	if err != nil {
-		return fmt.Errorf("watch freight: %w", err)
+		return fmt.Errorf("watch freight: %w", errorFromWatchStartError(err))
 	}
 	defer w.Stop()
 
@@ -55,12 +55,20 @@ func (s *server) WatchFreight(
 			if !ok {
 				return fmt.Errorf("unexpected object type %T", e.Object)
 			}
-			if len(warehouses) > 0 && !slices.Contains(warehouses, freight.Origin.Name) {
-				continue
+			eventType := e.Type
+			if len(warehouses) > 0 {
+				var send bool
+				eventType, send = filteredWatchEventType(
+					e.Type,
+					slices.Contains(warehouses, freight.Origin.Name),
+				)
+				if !send {
+					continue
+				}
 			}
 			if err := stream.Send(&svcv1alpha1.WatchFreightResponse{
 				Freight: freight,
-				Type:    string(e.Type),
+				Type:    string(eventType),
 			}); err != nil {
 				return fmt.Errorf("send response: %w", err)
 			}

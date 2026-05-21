@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
@@ -14,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -331,26 +333,39 @@ func Test_server_getPromotion_watch(t *testing.T) {
 			},
 			{
 				name: "watches promotion successfully",
-				clientBuilder: fake.NewClientBuilder().WithObjects(
-					&kargoapi.Project{
-						ObjectMeta: metav1.ObjectMeta{Name: projectName},
-					},
-					&kargoapi.Promotion{
-						ObjectMeta: metav1.ObjectMeta{
-							Namespace: projectName,
-							Name:      promotionName,
+				clientBuilder: fake.NewClientBuilder().
+					WithObjects(
+						&kargoapi.Project{
+							ObjectMeta: metav1.ObjectMeta{Name: projectName},
 						},
-					},
-				),
-				operations: func(ctx context.Context, c client.Client) {
-					// Fetch the current promotion first to get the resource version
-					promo := &kargoapi.Promotion{}
-					_ = c.Get(ctx, client.ObjectKey{Namespace: projectName, Name: promotionName}, promo)
-
-					// Update the promotion to trigger a watch event
-					promo.Spec.Stage = "test-stage"
-					_ = c.Update(ctx, promo)
-				},
+						&kargoapi.Promotion{
+							ObjectMeta: metav1.ObjectMeta{
+								Namespace: projectName,
+								Name:      promotionName,
+							},
+						},
+					).
+					WithInterceptorFuncs(interceptor.Funcs{
+						Watch: func(
+							_ context.Context,
+							_ client.WithWatch,
+							_ client.ObjectList,
+							_ ...client.ListOption,
+						) (watch.Interface, error) {
+							w := watch.NewFake()
+							go func() {
+								time.Sleep(10 * time.Millisecond)
+								w.Modify(&kargoapi.Promotion{
+									ObjectMeta: metav1.ObjectMeta{
+										Namespace: projectName,
+										Name:      promotionName,
+									},
+									Spec: kargoapi.PromotionSpec{Stage: "test-stage"},
+								})
+							}()
+							return w, nil
+						},
+					}),
 				assertions: func(t *testing.T, w *httptest.ResponseRecorder, _ client.Client) {
 					require.Equal(t, http.StatusOK, w.Code)
 

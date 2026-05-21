@@ -2210,9 +2210,10 @@ export type QueryFreightResponse = Message<"akuity.io.kargo.service.v1alpha1.Que
   groups: { [key: string]: FreightList };
 
   /**
-   * resource_version is the Kubernetes ListMeta.resourceVersion of the
-   * underlying list, populated only when no stage or origin filters are
-   * applied. Suitable for use as a starting point for Watch calls.
+   * resource_version is the effective resource version of the underlying
+   * Freight list for list-backed queries, including origin-filtered queries.
+   * It is empty for stage-derived availability queries. Suitable for use as a
+   * starting point for Watch calls.
    *
    * @generated from field: string resource_version = 2;
    */

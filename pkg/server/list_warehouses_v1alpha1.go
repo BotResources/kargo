@@ -79,10 +79,12 @@ func (s *server) listWarehouses(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
+	list.ResourceVersion = resourceVersionForWarehouseList(list)
 
 	c.JSON(http.StatusOK, list)
 }
 
+// watchWarehouses streams Warehouse changes through the REST SSE endpoint.
 func (s *server) watchWarehouses(c *gin.Context, project string, resourceVersion string) {
 	ctx := c.Request.Context()
 	logger := logging.LoggerFromContext(ctx)
@@ -93,6 +95,9 @@ func (s *server) watchWarehouses(c *gin.Context, project string, resourceVersion
 		buildWatchListOptions(project, resourceVersion)...,
 	)
 	if err != nil {
+		if sendSSEWatchStartError(c, err) {
+			return
+		}
 		logger.Error(err, "failed to start watch")
 		_ = c.Error(fmt.Errorf("watch warehouses: %w", err))
 		return
@@ -120,9 +125,23 @@ func (s *server) watchWarehouses(c *gin.Context, project string, resourceVersion
 				logger.Debug("watch channel closed")
 				return
 			}
+			if watchErr := errorFromWatchEvent(e); watchErr != nil {
+				sendSSEWatchError(c, watchErr)
+				return
+			}
 			if !convertAndSendWatchEvent(c, e, (*kargoapi.Warehouse)(nil)) {
 				return
 			}
 		}
 	}
+}
+
+// resourceVersionForWarehouseList returns the list ResourceVersion when useful,
+// otherwise it falls back to the maximum Warehouse item ResourceVersion.
+func resourceVersionForWarehouseList(list *kargoapi.WarehouseList) string {
+	rvs := make([]string, len(list.Items))
+	for i := range list.Items {
+		rvs[i] = list.Items[i].ResourceVersion
+	}
+	return effectiveResourceVersion(list.ResourceVersion, rvs)
 }

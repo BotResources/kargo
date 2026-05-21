@@ -13,6 +13,7 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
@@ -440,6 +441,63 @@ func Test_server_listPromotions_watch(t *testing.T) {
 				},
 			},
 			resourceVersionTestCase,
+			{
+				name: "reports expired resourceVersion as SSE error",
+				url:  "/v1beta1/projects/" + projectName + "/promotions?watch=true&resourceVersion=123",
+				clientBuilder: fake.NewClientBuilder().
+					WithObjects(&kargoapi.Project{
+						ObjectMeta: metav1.ObjectMeta{Name: projectName},
+					}).
+					WithInterceptorFuncs(interceptor.Funcs{
+						Watch: func(
+							_ context.Context,
+							_ client.WithWatch,
+							_ client.ObjectList,
+							_ ...client.ListOption,
+						) (watch.Interface, error) {
+							w := watch.NewFake()
+							go func() {
+								time.Sleep(10 * time.Millisecond)
+								w.Error(&metav1.Status{
+									Status:  metav1.StatusFailure,
+									Message: "too old resource version: 123",
+									Reason:  metav1.StatusReasonExpired,
+									Code:    http.StatusGone,
+								})
+							}()
+							return w, nil
+						},
+					}),
+				assertions: func(t *testing.T, w *httptest.ResponseRecorder, _ client.Client) {
+					require.Equal(t, http.StatusOK, w.Code)
+					require.Contains(t, w.Body.String(), "event: error")
+					require.Contains(t, w.Body.String(), "watch resource version expired")
+				},
+			},
+			{
+				name: "reports expired resourceVersion startup error as SSE error",
+				url:  "/v1beta1/projects/" + projectName + "/promotions?watch=true&resourceVersion=123",
+				clientBuilder: fake.NewClientBuilder().
+					WithObjects(&kargoapi.Project{
+						ObjectMeta: metav1.ObjectMeta{Name: projectName},
+					}).
+					WithInterceptorFuncs(interceptor.Funcs{
+						Watch: func(
+							_ context.Context,
+							_ client.WithWatch,
+							_ client.ObjectList,
+							_ ...client.ListOption,
+						) (watch.Interface, error) {
+							return nil, apierrors.NewResourceExpired("too old resource version: 123")
+						},
+					}),
+				assertions: func(t *testing.T, w *httptest.ResponseRecorder, _ client.Client) {
+					require.Equal(t, http.StatusOK, w.Code)
+					require.Equal(t, "text/event-stream", w.Header().Get("Content-Type"))
+					require.Contains(t, w.Body.String(), "event: error")
+					require.Contains(t, w.Body.String(), "watch resource version expired")
+				},
+			},
 			{
 				name: "watches empty promotion list",
 				clientBuilder: fake.NewClientBuilder().WithObjects(

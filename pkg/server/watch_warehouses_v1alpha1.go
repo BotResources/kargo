@@ -28,7 +28,7 @@ func (s *server) WatchWarehouses(
 
 	name := req.Msg.GetName()
 
-	if name != "" {
+	if name != "" && req.Msg.GetResourceVersion() == "" {
 		if err := s.client.Get(ctx, libClient.ObjectKey{
 			Namespace: project,
 			Name:      name,
@@ -47,7 +47,7 @@ func (s *server) WatchWarehouses(
 		buildWatchListOptions(project, req.Msg.GetResourceVersion(), opts...)...,
 	)
 	if err != nil {
-		return fmt.Errorf("watch warehouse: %w", err)
+		return fmt.Errorf("watch warehouse: %w", errorFromWatchStartError(err))
 	}
 	defer w.Stop()
 	for {
