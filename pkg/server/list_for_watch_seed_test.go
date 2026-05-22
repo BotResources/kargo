@@ -17,7 +17,7 @@ import (
 	"github.com/akuity/kargo/pkg/server/kubernetes"
 )
 
-func TestServer_listFresh(t *testing.T) {
+func TestServer_listForWatchSeed(t *testing.T) {
 	t.Parallel()
 
 	scheme := mustNewScheme()
@@ -92,7 +92,7 @@ func TestServer_listFresh(t *testing.T) {
 		}
 
 		promotions := &kargoapi.PromotionList{}
-		err := s.listFresh(
+		err := s.listForWatchSeed(
 			t.Context(),
 			"promotions",
 			promotions,
@@ -142,7 +142,7 @@ func TestServer_listFresh(t *testing.T) {
 			},
 		}
 
-		err := s.listFresh(
+		err := s.listForWatchSeed(
 			t.Context(),
 			"promotions",
 			&kargoapi.PromotionList{},
@@ -173,7 +173,7 @@ func TestServer_listFresh(t *testing.T) {
 		// Should not error and should not invoke authorizeFn directly;
 		// the cached authorizing client performs its own SAR per call,
 		// which is bypassed here via SkipAuthorization on kubeClient.
-		err := s.listFresh(
+		err := s.listForWatchSeed(
 			t.Context(),
 			"promotions",
 			&kargoapi.PromotionList{},

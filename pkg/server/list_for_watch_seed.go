@@ -9,23 +9,23 @@ import (
 	kargoapi "github.com/akuity/kargo/api/v1alpha1"
 )
 
-// listFresh lists Kargo resources directly from the Kubernetes API, bypassing
-// the API server's controller-runtime read cache.
+// listForWatchSeed lists Kargo resources directly from the Kubernetes API,
+// bypassing the API server's controller-runtime read cache.
 //
 // The cached client can return a list ResourceVersion of "0" or one that is
 // older than the apiserver's compacted floor, which makes follow-up watches
 // either replay the full set or fail with a "too old" error and force the
-// client into a refetch loop. listFresh avoids that by going straight to the
-// API for list+watch seed endpoints where the returned resourceVersion is used
-// to start a follow-up watch.
+// client into a refetch loop. listForWatchSeed avoids that by going straight
+// to the API for list+watch seed endpoints where the returned resourceVersion
+// is used to start a follow-up watch.
 //
 // The direct reader does not enforce Kargo's RBAC, so we authorize the caller
 // first via the authorizing client. resource is the lowercase resource name in
 // the Kargo API group (e.g. "stages", "warehouses", "promotions", "freights").
 // When no direct reader is available (tests, or no rest.Config at construction
-// time), listFresh falls back to the standard authorizing client, which
+// time), listForWatchSeed falls back to the standard authorizing client, which
 // performs its own SubjectAccessReview as part of List.
-func (s *server) listFresh(
+func (s *server) listForWatchSeed(
 	ctx context.Context,
 	resource string,
 	list client.ObjectList,

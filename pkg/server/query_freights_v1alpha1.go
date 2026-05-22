@@ -180,18 +180,18 @@ func (s *server) listFreight(
 
 // listFreightForQuery lists Freight for the QueryFreight endpoint, which
 // returns a ResourceVersion that clients use to start follow-up watches. When
-// the singleton uncached reader is available it goes through listFresh so the
-// returned RV is fresh enough to avoid watch refetch loops; listFresh
-// authorizes the caller before bypassing the cache. When no direct reader is
-// wired (tests, or no rest.Config), it falls back to the standard cached
-// path via listFreight, preserving the listFreightFn test seam.
+// the singleton uncached reader is available it goes through listForWatchSeed
+// so the returned RV is fresh enough to avoid watch refetch loops.
+// listForWatchSeed authorizes the caller before bypassing the cache. When no
+// direct reader is wired (tests, or no rest.Config), it falls back to the
+// standard cached path via listFreight, preserving the listFreightFn test seam.
 func (s *server) listFreightForQuery(
 	ctx context.Context,
 	list client.ObjectList,
 	opts ...client.ListOption,
 ) error {
 	if s.directReader != nil {
-		return s.listFresh(ctx, "freights", list, opts...)
+		return s.listForWatchSeed(ctx, "freights", list, opts...)
 	}
 	return s.listFreight(ctx, list, opts...)
 }

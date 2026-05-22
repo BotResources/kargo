@@ -34,7 +34,7 @@ func (s *server) ListPromotions(
 	stage := req.Msg.GetStage()
 
 	var list kargoapi.PromotionList
-	if err := s.listFresh(ctx, "promotions", &list, client.InNamespace(project)); err != nil {
+	if err := s.listForWatchSeed(ctx, "promotions", &list, client.InNamespace(project)); err != nil {
 		return nil, fmt.Errorf("list promotions: %w", err)
 	}
 	if stage != "" {
@@ -76,7 +76,7 @@ func (s *server) listPromotions(c *gin.Context) {
 	}
 
 	list := &kargoapi.PromotionList{}
-	if err := s.listFresh(ctx, "promotions", list, client.InNamespace(project)); err != nil {
+	if err := s.listForWatchSeed(ctx, "promotions", list, client.InNamespace(project)); err != nil {
 		_ = c.Error(err)
 		return
 	}
