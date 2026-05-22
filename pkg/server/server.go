@@ -51,6 +51,17 @@ type server struct {
 	rolesDB rbac.RolesDatabase
 	sender  event.Sender
 
+	// directReader is a singleton, uncached controller-runtime client used by
+	// listFresh to bypass the API server's read cache on the list+watch seed
+	// endpoints whose returned ResourceVersion is reused by a follow-up watch
+	// (currently Stages, Warehouses, Promotions, and the Freight list served
+	// by QueryFreight). It is wired once in NewServer from cfg.RestConfig and
+	// is nil in tests or when no rest.Config is available, in which case
+	// listFresh falls back to the standard authorizing client. The direct
+	// reader does NOT enforce Kargo's RBAC on its own; listFresh authorizes
+	// the caller before using it.
+	directReader client.Reader
+
 	// The following behaviors are overridable for testing purposes:
 
 	// Common validations:
@@ -100,7 +111,6 @@ type server struct {
 		client.ObjectList,
 		...client.ListOption,
 	) error
-	newDirectClientFn             directClientFactory
 	getAvailableFreightForStageFn func(
 		context.Context,
 		*kargoapi.Stage,
@@ -179,7 +189,6 @@ func NewServer(
 	s.createPromotionFn = kubeClient.Create
 	s.findDownstreamStagesFn = s.findDownstreamStages
 	s.listFreightFn = kubeClient.List
-	s.newDirectClientFn = client.New
 	s.getAvailableFreightForStageFn = s.getAvailableFreightForStage
 	s.getVerifiedFreightFn = s.getVerifiedFreight
 	s.patchFreightAliasFn = s.patchFreightAlias
@@ -188,6 +197,31 @@ func NewServer(
 	s.getAnalysisTemplateFn = rollouts.GetAnalysisTemplate
 	s.getClusterAnalysisTemplateFn = rollouts.GetClusterAnalysisTemplate
 	s.getAnalysisRunFn = rollouts.GetAnalysisRun
+
+	// Wire the singleton uncached direct reader once. listFresh uses it to
+	// bypass the cache on list+watch endpoints whose cached ResourceVersion
+	// can otherwise be stale enough to trigger client refetch loops.
+	if cfg.RestConfig != nil {
+		directReader, err := client.New(
+			cfg.RestConfig,
+			client.Options{
+				Scheme: kubeClient.Scheme(),
+				Mapper: kubeClient.RESTMapper(),
+			},
+		)
+		if err != nil {
+			// Construction failure is unexpected with a valid rest.Config; log
+			// and continue without the optimization (listFresh falls back to
+			// the cached authorizing client).
+			logging.LoggerFromContext(context.Background()).Error(
+				err,
+				"error initializing direct Kubernetes reader; "+
+					"falling back to cached client for fresh-list endpoints",
+			)
+		} else {
+			s.directReader = directReader
+		}
+	}
 
 	return s
 }

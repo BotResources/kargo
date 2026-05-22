@@ -4,40 +4,51 @@ import (
 	"context"
 	"fmt"
 
-	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kargoapi "github.com/akuity/kargo/api/v1alpha1"
 )
 
-// directClientFactory creates uncached Kubernetes clients for listFresh. Tests
-// use it to exercise the direct-list path without reaching a real API server.
-type directClientFactory func(*rest.Config, client.Options) (client.Client, error)
-
-// listFresh lists resources directly from the Kubernetes API server when a
-// rest.Config is available. The API server's cached client can return a list
-// ResourceVersion of "0", which causes follow-up watches to replay existing
-// objects. This helper authorizes the list first, then bypasses the cache only
-// for the actual read. Callers should pass options supported by direct API
-// lists; cache-only field selectors do not belong here.
+// listFresh lists Kargo resources directly from the Kubernetes API, bypassing
+// the API server's controller-runtime read cache.
+//
+// The cached client can return a list ResourceVersion of "0" or one that is
+// older than the apiserver's compacted floor, which makes follow-up watches
+// either replay the full set or fail with a "too old" error and force the
+// client into a refetch loop. listFresh avoids that by going straight to the
+// API for list+watch seed endpoints where the returned resourceVersion is used
+// to start a follow-up watch.
+//
+// The direct reader does not enforce Kargo's RBAC, so we authorize the caller
+// first via the authorizing client. resource is the lowercase resource name in
+// the Kargo API group (e.g. "stages", "warehouses", "promotions", "freights").
+// When no direct reader is available (tests, or no rest.Config at construction
+// time), listFresh falls back to the standard authorizing client, which
+// performs its own SubjectAccessReview as part of List.
 func (s *server) listFresh(
 	ctx context.Context,
 	resource string,
 	list client.ObjectList,
 	opts ...client.ListOption,
 ) error {
-	if s.cfg.RestConfig == nil {
+	if s.directReader == nil {
+		// Fallback: the authorizing client performs its own SAR per call.
 		if s.client == nil {
 			return fmt.Errorf("kubernetes client is not configured")
 		}
 		return s.client.List(ctx, list, opts...)
 	}
 
-	var listOpts client.ListOptions
-	listOpts.ApplyOptions(opts)
 	if s.authorizeFn == nil {
 		return fmt.Errorf("authorize function is not configured")
 	}
+
+	var listOpts client.ListOptions
+	listOpts.ApplyOptions(opts)
+
+	// Authorize the user before bypassing the cache. The direct reader runs
+	// with the API server's own credentials, so without this check a caller
+	// could read data they would otherwise be denied.
 	if err := s.authorizeFn(
 		ctx,
 		"list",
@@ -48,19 +59,5 @@ func (s *server) listFresh(
 		return err
 	}
 
-	newDirectClientFn := s.newDirectClientFn
-	if newDirectClientFn == nil {
-		newDirectClientFn = client.New
-	}
-	directClient, err := newDirectClientFn(
-		s.cfg.RestConfig,
-		client.Options{
-			Scheme: s.client.Scheme(),
-			Mapper: s.client.RESTMapper(),
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create direct Kubernetes client: %w", err)
-	}
-	return directClient.List(ctx, list, opts...)
+	return s.directReader.List(ctx, list, opts...)
 }

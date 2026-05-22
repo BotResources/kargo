@@ -156,7 +156,7 @@ func (s *server) watchStages(c *gin.Context, project string, warehouses []string
 // filtered to those that request Freight from at least one of the specified
 // warehouses (directly or through upstream stages). When warehouses is empty,
 // all Stages are returned. The returned StageList carries an effective
-// ResourceVersion from the underlying Kubernetes List call.
+// ResourceVersion derived from the list response or listed items.
 func (s *server) listStagesByWarehouses(
 	ctx context.Context,
 	project string,

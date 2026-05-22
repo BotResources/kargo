@@ -138,22 +138,6 @@ func (s *server) QueryFreight(
 	}), nil
 }
 
-// listFreightForQuery lists Freight using the fresh direct-client path when it
-// is available, so callers can return a watchable resourceVersion.
-func (s *server) listFreightForQuery(
-	ctx context.Context,
-	list client.ObjectList,
-	opts ...client.ListOption,
-) error {
-	if s.cfg.RestConfig == nil {
-		if s.listFreightFn == nil {
-			return s.client.List(ctx, list, opts...)
-		}
-		return s.listFreightFn(ctx, list, opts...)
-	}
-	return s.listFresh(ctx, "freights", list, opts...)
-}
-
 // filterFreightByOrigins returns Freight whose origin Warehouse is one of the
 // requested origins.
 func filterFreightByOrigins(
@@ -179,6 +163,39 @@ func resourceVersionForFreightList(list *kargoapi.FreightList) string {
 	return effectiveResourceVersion(list.ResourceVersion, rvs)
 }
 
+// listFreight lists Freight through the server's normal Kubernetes client path.
+// Tests may override listFreightFn; otherwise this falls back to s.client.List.
+// Use this for internal lookups (e.g. verified-Freight aggregation) where the
+// cached client is fine.
+func (s *server) listFreight(
+	ctx context.Context,
+	list client.ObjectList,
+	opts ...client.ListOption,
+) error {
+	if s.listFreightFn != nil {
+		return s.listFreightFn(ctx, list, opts...)
+	}
+	return s.client.List(ctx, list, opts...)
+}
+
+// listFreightForQuery lists Freight for the QueryFreight endpoint, which
+// returns a ResourceVersion that clients use to start follow-up watches. When
+// the singleton uncached reader is available it goes through listFresh so the
+// returned RV is fresh enough to avoid watch refetch loops; listFresh
+// authorizes the caller before bypassing the cache. When no direct reader is
+// wired (tests, or no rest.Config), it falls back to the standard cached
+// path via listFreight, preserving the listFreightFn test seam.
+func (s *server) listFreightForQuery(
+	ctx context.Context,
+	list client.ObjectList,
+	opts ...client.ListOption,
+) error {
+	if s.directReader != nil {
+		return s.listFresh(ctx, "freights", list, opts...)
+	}
+	return s.listFreight(ctx, list, opts...)
+}
+
 func (s *server) getAvailableFreightForStage(
 	ctx context.Context,
 	stage *kargoapi.Stage,
@@ -194,7 +211,7 @@ func (s *server) getVerifiedFreight(
 	var verifiedFreight []kargoapi.Freight
 	for _, upstream := range upstreams {
 		var freight kargoapi.FreightList
-		if err := s.listFreightFn(
+		if err := s.listFreight(
 			ctx,
 			&freight,
 			&client.ListOptions{
