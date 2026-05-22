@@ -1621,6 +1621,19 @@ RawFormat specifies the format for raw resource representation.
 | virtualRepoName | string |  VirtualRepoName is the name of an Artifactory virtual repository.  When unspecified, the Artifactory webhook receiver depends on the value of the webhook payload's `data.repo_key` field when inferring the URL of the repository from which the webhook originated, which will always be an Artifactory "local repository." In cases where a Warehouse subscribes to such a repository indirectly via a "virtual repository," there will be a discrepancy between the inferred (local) repository URL and the URL actually used by the subscription, which can prevent the receiver from identifying such a Warehouse as one in need of refreshing. When specified, the value of the VirtualRepoName field supersedes the value of the webhook payload's `data.repo_key` field to compensate for that discrepancy.  In practice, when using virtual repositories, a separate Artifactory webhook receiver should be configured for each, but one such receiver can handle inbound webhooks from any number of local repositories that are aggregated by that virtual repository. For example, if a virtual repository `proj-virtual` aggregates container images from all of the `proj` Artifactory project's local image repositories, with a single webhook configured to post to a single receiver configured for the `proj-virtual` virtual repository, an image pushed to `example.frog.io/proj-&lt;local-repo-name&gt;/&lt;path&gt;/image`, will cause that receiver to refresh all Warehouses subscribed to `example.frog.io/proj-virtual/&lt;path&gt;/image`.  +optional |
 
 
+### AutoPromotionHold {#github-com-akuity-kargo-api-v1alpha1-AutoPromotionHold}
+ AutoPromotionHold pins a single FreightOrigin on a Stage, pausing auto-promotion for that origin after a user-directed promotion intentionally selects an older piece of Freight. Other origins continue to auto-promote normally. The origin is identified by the enclosing map key.
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| freight | [FreightReference](#github-com-akuity-kargo-api-v1alpha1-FreightReference) |  Freight is a reference to the Freight that was selected by the operator when the hold was created.  |
+| state | string |  State is the current lifecycle state of the hold.  |
+| promotionName | string |  PromotionName is the name of the rollback Promotion associated with this hold, when applicable. |
+| promotionUID | string |  PromotionUID is the UID of the rollback Promotion. Used to prevent an older failed rollback from clearing a newer hold. |
+| actor | string |  Actor is an identifier for the user who caused the hold to be created. |
+| reason | string |  Reason is a free-form human-readable explanation of why the hold was created. |
+| createdAt | k8s.io.apimachinery.pkg.apis.meta.v1.Time |  CreatedAt is the time at which the hold was created. |
+
+
 ### AutoPromotionOptions {#github-com-akuity-kargo-api-v1alpha1-AutoPromotionOptions}
  AutoPromotionOptions specifies options pertaining to auto-promotion.
 | Field | Type | Description |
@@ -2263,6 +2276,7 @@ RawFormat specifies the format for raw resource representation.
 | ----- | ---- | ----------- |
 | stage | string |  Stage specifies the name of the Stage to which this Promotion applies. The Stage referenced by this field MUST be in the same namespace as the Promotion.       |
 | freight | string |  Freight specifies the piece of Freight to be promoted into the Stage referenced by the Stage field.       |
+| source | string |  Source describes the system path that created this Promotion. The value is immutable and is used by controllers to distinguish normal auto-promotion from user-directed promotion requests. |
 | vars | [ExpressionVariable](#github-com-akuity-kargo-api-v1alpha1-ExpressionVariable) |  Vars is a list of variables that can be referenced by expressions in promotion steps. |
 | steps | [PromotionStep](#github-com-akuity-kargo-api-v1alpha1-PromotionStep) |  Steps specifies the directives to be executed as part of this Promotion. The order in which the directives are executed is the order in which they are listed in this field.     |
 
@@ -2420,6 +2434,15 @@ RawFormat specifies the format for raw resource representation.
 | lastPromotion | [PromotionReference](#github-com-akuity-kargo-api-v1alpha1-PromotionReference) |  LastPromotion is a reference to the last completed promotion. |
 | autoPromotionEnabled | bool |  AutoPromotionEnabled indicates whether automatic promotion is enabled for the Stage based on the ProjectConfig. |
 | metadata | [StageStatus.MetadataEntry](#github-com-akuity-kargo-api-v1alpha1-StageStatus-MetadataEntry) |  Metadata is a map of arbitrary metadata associated with the Stage. This is useful for storing additional information about the Stage that can be shared across promotions, verifications, or other processes. |
+| autoPromotionHolds | [StageStatus.AutoPromotionHoldsEntry](#github-com-akuity-kargo-api-v1alpha1-StageStatus-AutoPromotionHoldsEntry) |  AutoPromotionHolds pause auto-promotion for specific FreightOrigins on this Stage after a user-directed promotion intentionally selects an older piece of Freight. Each map entry pins a single origin keyed by the canonical string representation of the FreightOrigin. |
+
+
+### StageStatus.AutoPromotionHoldsEntry {#github-com-akuity-kargo-api-v1alpha1-StageStatus-AutoPromotionHoldsEntry}
+ 
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| key | string |   |
+| value | [AutoPromotionHold](#github-com-akuity-kargo-api-v1alpha1-AutoPromotionHold) |   |
 
 
 ### StageStatus.MetadataEntry {#github-com-akuity-kargo-api-v1alpha1-StageStatus-MetadataEntry}
