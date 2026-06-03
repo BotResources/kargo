@@ -16,8 +16,6 @@ import (
 	"connectrpc.com/grpchealth"
 	"github.com/klauspost/compress/gzhttp"
 	"github.com/rs/cors"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"

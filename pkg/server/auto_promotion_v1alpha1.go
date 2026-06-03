@@ -325,7 +325,8 @@ func (s *server) patchStageAutoPromotionHolds(
 
 // patchStageAutoPromotionHoldsWithStage mutates Stage status with optimistic
 // locking while allowing the caller to inspect the live Stage snapshot used for
-// the write.
+// the write. The mutation is a function because the caller's preconditions
+// need to be checked again on every retry after the latest Stage has been read.
 func (s *server) patchStageAutoPromotionHoldsWithStage(
 	ctx context.Context,
 	key client.ObjectKey,

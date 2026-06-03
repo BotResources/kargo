@@ -274,6 +274,7 @@ func ParseFreightOriginKey(key string) (FreightOrigin, error) {
 	if !ok || kind == "" || name == "" {
 		return FreightOrigin{}, fmt.Errorf("invalid Freight origin key %q", key)
 	}
+
 	origin := FreightOrigin{Kind: FreightOriginKind(kind), Name: name}
 	switch origin.Kind {
 	case FreightOriginKindWarehouse:
@@ -445,14 +446,14 @@ type StageStatus struct {
 	// that can be shared across promotions, verifications, or other processes.
 	Metadata map[string]apiextensionsv1.JSON `json:"metadata,omitempty" protobuf:"bytes,15,rep,name=metadata" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// AutoPromotionHolds pause auto-promotion for specific FreightOrigins on
-	// this Stage after a user-directed promotion intentionally selects an older
-	// piece of Freight. Each map entry pins a single origin keyed by the
-	// canonical string representation of the FreightOrigin.
+	// this Stage after a user-directed promotion intentionally selects Freight
+	// other than the current auto-promotion candidate for the same origin. Each
+	// map entry pins a single origin keyed by the canonical string
+	// representation of the FreightOrigin.
 	AutoPromotionHolds map[string]AutoPromotionHold `json:"autoPromotionHolds,omitempty" protobuf:"bytes,16,rep,name=autoPromotionHolds" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 }
 
-// AutoPromotionHoldState represents the lifecycle state of an
-// AutoPromotionHold.
+// AutoPromotionHoldState represents the lifecycle state of an AutoPromotionHold.
 // +kubebuilder:validation:Enum=Pending;Active
 type AutoPromotionHoldState string
 
@@ -467,8 +468,9 @@ const (
 
 // AutoPromotionHold pins a single FreightOrigin on a Stage, pausing
 // auto-promotion for that origin after a user-directed promotion intentionally
-// selects an older piece of Freight. Other origins continue to auto-promote
-// normally. The origin is identified by the enclosing map key.
+// selects Freight other than the current auto-promotion candidate for the same
+// origin. Other origins continue to auto-promote normally. The origin is
+// identified by the enclosing map key.
 type AutoPromotionHold struct {
 	// Freight is a reference to the Freight that was selected by the operator
 	// when the hold was created.
@@ -498,6 +500,7 @@ func (s *StageStatus) GetAutoPromotionHold(origin FreightOrigin) (AutoPromotionH
 	if s == nil {
 		return AutoPromotionHold{}, false
 	}
+
 	hold, ok := s.AutoPromotionHolds[origin.String()]
 	if !ok {
 		return AutoPromotionHold{}, false

@@ -18,6 +18,7 @@ func FormatAPIError(action string, err error) error {
 	if err == nil {
 		return nil
 	}
+
 	var responseErr errorResponseGetter
 	if errors.As(err, &responseErr) {
 		payload := responseErr.GetPayload()
@@ -25,5 +26,6 @@ func FormatAPIError(action string, err error) error {
 			return fmt.Errorf("%s: %s", action, payload.Error)
 		}
 	}
+
 	return fmt.Errorf("%s: %w", action, err)
 }

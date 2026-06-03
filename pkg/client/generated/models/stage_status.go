@@ -23,9 +23,10 @@ type StageStatus struct {
 	AutoPromotionEnabled bool `json:"autoPromotionEnabled,omitempty"`
 
 	// AutoPromotionHolds pause auto-promotion for specific FreightOrigins on
-	// this Stage after a user-directed promotion intentionally selects an older
-	// piece of Freight. Each map entry pins a single origin keyed by the
-	// canonical string representation of the FreightOrigin.
+	// this Stage after a user-directed promotion intentionally selects Freight
+	// other than the current auto-promotion candidate for the same origin. Each
+	// map entry pins a single origin keyed by the canonical string
+	// representation of the FreightOrigin.
 	AutoPromotionHolds map[string]AutoPromotionHold `json:"autoPromotionHolds,omitempty"`
 
 	// Conditions contains the last observations of the Stage's current

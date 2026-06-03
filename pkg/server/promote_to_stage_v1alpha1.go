@@ -365,11 +365,12 @@ func newStagePromotionConflictError(format string, args ...any) error {
 	return &stagePromotionConflictError{message: fmt.Sprintf(format, args...)}
 }
 
-// createStagePromotion creates a non-auto Promotion and, when the selected
-// Freight is older than the current auto-promotion candidate, first records a
-// pending auto-promotion hold. If Promotion creation fails after the hold write,
-// deterministic API errors remove the hold immediately; ambiguous create errors
-// leave it in place for Stage controller recovery.
+// createStagePromotion creates a non-auto Promotion and handles the
+// auto-promotion hold side effects implied by the selected Freight. Selecting
+// Freight other than the current auto-promotion candidate records a pending
+// hold before the Promotion is created. Selecting the current candidate records
+// annotations that let the Stage controller clear an existing active hold after
+// the Promotion succeeds.
 func (s *server) createStagePromotion(
 	ctx context.Context,
 	stage *kargoapi.Stage,
@@ -402,117 +403,31 @@ func (s *server) createStagePromotion(
 
 	createdHold := false
 	var createdPendingHold kargoapi.AutoPromotionHold
-	if candidate != nil && candidate.Name != freight.Name {
-		var existingHold *kargoapi.AutoPromotionHold
-		var candidateErr error
-		var candidateConflict error
-		now := metav1.Now()
-		hold := kargoapi.AutoPromotionHold{
-			Freight: kargoapi.FreightReference{
-				Name:   freight.Name,
-				Origin: freight.Origin,
-			},
-			State:         kargoapi.AutoPromotionHoldStatePending,
-			PromotionName: promotion.Name,
-			Actor:         autoPromotionHoldActor(ctx),
-			Reason:        opts.Reason,
-			CreatedAt:     &now,
-		}
-		// The status patch callback can only report whether it changed the
-		// Stage. Capture conflict details so callers still receive precise
-		// 409s instead of a generic "unchanged" result.
-		if createdHold, err = s.patchStageAutoPromotionHoldsWithStage(ctx, key, func(liveStage *kargoapi.Stage) bool {
-			existingHold = nil
-			candidateErr = nil
-			candidateConflict = nil
 
-			liveCandidate, liveCandidateErr := s.getAutoPromotionCandidate(ctx, liveStage, freight.Origin)
-			if liveCandidateErr != nil {
-				candidateErr = fmt.Errorf("get live auto-promotion candidate: %w", liveCandidateErr)
-				return false
-			}
-			if candidateConflict = expectedAutoCandidateConflict(
-				opts.ExpectedAutoCandidate,
-				liveCandidate,
-			); candidateConflict != nil {
-				return false
-			}
-			if liveCandidate == nil || liveCandidate.Name == freight.Name {
-				return false
-			}
-
-			if statusHold, ok := liveStage.Status.GetAutoPromotionHold(freight.Origin); ok {
-				existing := statusHold
-				existingHold = &existing
-				return false
-			}
-			return upsertAutoPromotionHold(&liveStage.Status, freight.Origin, hold)
-		}); err != nil {
-			return stagePromotionResult{}, fmt.Errorf("create auto-promotion hold: %w", err)
-		}
-		if candidateErr != nil {
-			return stagePromotionResult{}, candidateErr
-		}
-		if candidateConflict != nil {
-			return stagePromotionResult{}, candidateConflict
-		}
-		if existingHold != nil {
-			return stagePromotionResult{}, newStagePromotionConflictError(
-				"auto-promotion is already %s for origin %q; wait for the "+
-					"current rollback to settle or resume auto-promotion before "+
-					"creating another rollback",
-				strings.ToLower(string(existingHold.State)),
-				freight.Origin.String(),
-			)
-		}
-		if createdHold {
-			createdPendingHold = hold
-			annotateRollbackPromotion(promotion)
-		}
-	} else if candidate != nil && candidate.Name == freight.Name {
-		hold, held := stage.Status.GetAutoPromotionHold(freight.Origin)
-		liveStage := &kargoapi.Stage{}
-		if err = s.client.InternalClient().Get(ctx, key, liveStage); err != nil {
-			return stagePromotionResult{}, fmt.Errorf("get live Stage before clearing auto-promotion hold: %w", err)
-		}
-		liveCandidate, err := s.getAutoPromotionCandidate(ctx, liveStage, freight.Origin)
-		if err != nil {
-			return stagePromotionResult{}, fmt.Errorf("get live auto-promotion candidate: %w", err)
-		}
-		if err = expectedAutoCandidateConflict(opts.ExpectedAutoCandidate, liveCandidate); err != nil {
+	switch {
+	case candidate != nil && candidate.Name != freight.Name:
+		if createdPendingHold, createdHold, err = s.createPendingAutoPromotionHold(
+			ctx,
+			key,
+			freight,
+			promotion,
+			opts,
+		); err != nil {
 			return stagePromotionResult{}, err
 		}
-		if liveCandidate != nil && liveCandidate.Name != freight.Name {
-			return stagePromotionResult{}, newStagePromotionConflictError(
-				"auto-promotion candidate changed to %q; reload and try again",
-				liveCandidate.Name,
-			)
+		if createdHold {
+			annotateRollbackPromotion(promotion)
 		}
-
-		liveHold, liveHeld := liveStage.Status.GetAutoPromotionHold(freight.Origin)
-		if liveHeld && liveHold.State == kargoapi.AutoPromotionHoldStatePending {
-			return stagePromotionResult{}, newStagePromotionConflictError(
-				"auto-promotion is pending for origin %q; wait for the "+
-					"current rollback to settle before promoting the current candidate",
-				freight.Origin.String(),
-			)
-		}
-		if liveHeld {
-			if !held ||
-				liveHold.State != kargoapi.AutoPromotionHoldStateActive ||
-				hold.State != kargoapi.AutoPromotionHoldStateActive ||
-				!api.AutoPromotionHoldIdentityMatches(liveHold, hold) {
-				return stagePromotionResult{}, newStagePromotionConflictError(
-					"auto-promotion hold for origin %q changed; reload and try again",
-					freight.Origin.String(),
-				)
-			}
-			annotateClearAutoPromotionHold(promotion, freight.Origin, liveHold)
-		} else if held {
-			return stagePromotionResult{}, newStagePromotionConflictError(
-				"auto-promotion hold for origin %q changed; reload and try again",
-				freight.Origin.String(),
-			)
+	case candidate != nil:
+		if err = s.annotateAutoPromotionHoldClearIfCurrent(
+			ctx,
+			key,
+			stage,
+			freight,
+			promotion,
+			opts,
+		); err != nil {
+			return stagePromotionResult{}, err
 		}
 	}
 
@@ -539,6 +454,142 @@ func (s *server) createStagePromotion(
 		Promotion:   promotion,
 		CreatedHold: createdHold,
 	}, nil
+}
+
+func (s *server) createPendingAutoPromotionHold(
+	ctx context.Context,
+	key client.ObjectKey,
+	freight *kargoapi.Freight,
+	promotion *kargoapi.Promotion,
+	opts stagePromotionOptions,
+) (kargoapi.AutoPromotionHold, bool, error) {
+	now := metav1.Now()
+	hold := kargoapi.AutoPromotionHold{
+		Freight: kargoapi.FreightReference{
+			Name:   freight.Name,
+			Origin: freight.Origin,
+		},
+		State:         kargoapi.AutoPromotionHoldStatePending,
+		PromotionName: promotion.Name,
+		Actor:         autoPromotionHoldActor(ctx),
+		Reason:        opts.Reason,
+		CreatedAt:     &now,
+	}
+
+	var existingHold *kargoapi.AutoPromotionHold
+	var candidateErr error
+	var candidateConflict error
+
+	// The status patch callback can only report whether it changed the Stage.
+	// Capture conflict details so callers still receive precise 409s instead of
+	// a generic "unchanged" result.
+	createdHold, err := s.patchStageAutoPromotionHoldsWithStage(ctx, key, func(liveStage *kargoapi.Stage) bool {
+		existingHold = nil
+		candidateErr = nil
+		candidateConflict = nil
+
+		liveCandidate, liveCandidateErr := s.getAutoPromotionCandidate(ctx, liveStage, freight.Origin)
+		if liveCandidateErr != nil {
+			candidateErr = fmt.Errorf("get live auto-promotion candidate: %w", liveCandidateErr)
+			return false
+		}
+		if candidateConflict = expectedAutoCandidateConflict(
+			opts.ExpectedAutoCandidate,
+			liveCandidate,
+		); candidateConflict != nil {
+			return false
+		}
+		if liveCandidate == nil || liveCandidate.Name == freight.Name {
+			return false
+		}
+
+		if statusHold, ok := liveStage.Status.GetAutoPromotionHold(freight.Origin); ok {
+			existing := statusHold
+			existingHold = &existing
+			return false
+		}
+		return upsertAutoPromotionHold(&liveStage.Status, freight.Origin, hold)
+	})
+	if err != nil {
+		return kargoapi.AutoPromotionHold{}, false, fmt.Errorf("create auto-promotion hold: %w", err)
+	}
+	if candidateErr != nil {
+		return kargoapi.AutoPromotionHold{}, false, candidateErr
+	}
+	if candidateConflict != nil {
+		return kargoapi.AutoPromotionHold{}, false, candidateConflict
+	}
+	if existingHold != nil {
+		return kargoapi.AutoPromotionHold{}, false, newStagePromotionConflictError(
+			"auto-promotion is already %s for origin %q; wait for the "+
+				"current rollback to settle or resume auto-promotion before "+
+				"creating another rollback",
+			strings.ToLower(string(existingHold.State)),
+			freight.Origin.String(),
+		)
+	}
+	return hold, createdHold, nil
+}
+
+func (s *server) annotateAutoPromotionHoldClearIfCurrent(
+	ctx context.Context,
+	key client.ObjectKey,
+	stage *kargoapi.Stage,
+	freight *kargoapi.Freight,
+	promotion *kargoapi.Promotion,
+	opts stagePromotionOptions,
+) error {
+	hold, held := stage.Status.GetAutoPromotionHold(freight.Origin)
+
+	liveStage := &kargoapi.Stage{}
+	// The cached Stage told us the selected Freight was the current candidate.
+	// Re-read through the internal client before annotating a clear, because
+	// the candidate or hold may have changed since the request started.
+	if err := s.client.InternalClient().Get(ctx, key, liveStage); err != nil {
+		return fmt.Errorf("get live Stage before clearing auto-promotion hold: %w", err)
+	}
+	liveCandidate, err := s.getAutoPromotionCandidate(ctx, liveStage, freight.Origin)
+	if err != nil {
+		return fmt.Errorf("get live auto-promotion candidate: %w", err)
+	}
+	if err = expectedAutoCandidateConflict(opts.ExpectedAutoCandidate, liveCandidate); err != nil {
+		return err
+	}
+	if liveCandidate != nil && liveCandidate.Name != freight.Name {
+		return newStagePromotionConflictError(
+			"auto-promotion candidate changed to %q; reload and try again",
+			liveCandidate.Name,
+		)
+	}
+
+	liveHold, liveHeld := liveStage.Status.GetAutoPromotionHold(freight.Origin)
+	if liveHeld && liveHold.State == kargoapi.AutoPromotionHoldStatePending {
+		return newStagePromotionConflictError(
+			"auto-promotion is pending for origin %q; wait for the "+
+				"current rollback to settle before promoting the current candidate",
+			freight.Origin.String(),
+		)
+	}
+	if liveHeld {
+		if !held ||
+			liveHold.State != kargoapi.AutoPromotionHoldStateActive ||
+			hold.State != kargoapi.AutoPromotionHoldStateActive ||
+			!api.AutoPromotionHoldIdentityMatches(liveHold, hold) {
+			return newStagePromotionConflictError(
+				"auto-promotion hold for origin %q changed; reload and try again",
+				freight.Origin.String(),
+			)
+		}
+		annotateClearAutoPromotionHold(promotion, freight.Origin, liveHold)
+		return nil
+	}
+	if held {
+		return newStagePromotionConflictError(
+			"auto-promotion hold for origin %q changed; reload and try again",
+			freight.Origin.String(),
+		)
+	}
+	return nil
 }
 
 // autoPromotionHoldMatchesPendingCreate checks that a pending hold is exactly

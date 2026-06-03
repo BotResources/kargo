@@ -87,7 +87,7 @@ export const Promote = (props: PromoteProps) => {
     </Link>
   ) : undefined;
   const selectedOriginLabel = originLabel(props.freight?.origin);
-  const isPromotingOlderThanCandidate = Boolean(candidateName && candidateName !== freightName);
+  const isPromotingNonCandidate = Boolean(candidateName && candidateName !== freightName);
   const activeHold = getAutoPromotionHold(props.stage, props.freight?.origin);
   const willResumeOnSuccess = Boolean(
     activeHold?.state === autoPromotionHoldStateActive && candidateName === freightName
@@ -143,7 +143,7 @@ export const Promote = (props: PromoteProps) => {
       data: {
         freight: freightName,
         expectedAutoCandidate: candidateName || undefined,
-        reason: isPromotingOlderThanCandidate ? reason.trim() || undefined : undefined
+        reason: isPromotingNonCandidate ? reason.trim() || undefined : undefined
       }
     });
   };
@@ -167,7 +167,7 @@ export const Promote = (props: PromoteProps) => {
       width={'1400px'}
       footer={
         <Flex vertical gap={12}>
-          {isPromotingOlderThanCandidate && (
+          {isPromotingNonCandidate && (
             <Input.TextArea
               placeholder='Reason (optional)'
               value={reason}
@@ -193,8 +193,8 @@ export const Promote = (props: PromoteProps) => {
               ? 'Checking auto-promotion'
               : isDownstreamPromotion
                 ? 'Promote to downstream'
-                : isPromotingOlderThanCandidate
-                  ? 'Roll back and pause auto-promotion'
+                : isPromotingNonCandidate
+                  ? 'Promote and pause auto-promotion'
                   : 'Promote'}
           </Button>
         </Flex>
@@ -211,7 +211,7 @@ export const Promote = (props: PromoteProps) => {
           />
         )}
 
-        {isPromotingOlderThanCandidate && (
+        {isPromotingNonCandidate && (
           <div className='mb-4'>
             <Alert
               showIcon

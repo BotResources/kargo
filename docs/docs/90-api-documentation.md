@@ -1622,7 +1622,7 @@ RawFormat specifies the format for raw resource representation.
 
 
 ### AutoPromotionHold {#github-com-akuity-kargo-api-v1alpha1-AutoPromotionHold}
- AutoPromotionHold pins a single FreightOrigin on a Stage, pausing auto-promotion for that origin after a user-directed promotion intentionally selects an older piece of Freight. Other origins continue to auto-promote normally. The origin is identified by the enclosing map key.
+ AutoPromotionHold pins a single FreightOrigin on a Stage, pausing auto-promotion for that origin after a user-directed promotion intentionally selects Freight other than the current auto-promotion candidate for the same origin. Other origins continue to auto-promote normally. The origin is identified by the enclosing map key.
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | freight | [FreightReference](#github-com-akuity-kargo-api-v1alpha1-FreightReference) |  Freight is a reference to the Freight that was selected by the operator when the hold was created.  |
@@ -2434,7 +2434,7 @@ RawFormat specifies the format for raw resource representation.
 | lastPromotion | [PromotionReference](#github-com-akuity-kargo-api-v1alpha1-PromotionReference) |  LastPromotion is a reference to the last completed promotion. |
 | autoPromotionEnabled | bool |  AutoPromotionEnabled indicates whether automatic promotion is enabled for the Stage based on the ProjectConfig. |
 | metadata | [StageStatus.MetadataEntry](#github-com-akuity-kargo-api-v1alpha1-StageStatus-MetadataEntry) |  Metadata is a map of arbitrary metadata associated with the Stage. This is useful for storing additional information about the Stage that can be shared across promotions, verifications, or other processes. |
-| autoPromotionHolds | [StageStatus.AutoPromotionHoldsEntry](#github-com-akuity-kargo-api-v1alpha1-StageStatus-AutoPromotionHoldsEntry) |  AutoPromotionHolds pause auto-promotion for specific FreightOrigins on this Stage after a user-directed promotion intentionally selects an older piece of Freight. Each map entry pins a single origin keyed by the canonical string representation of the FreightOrigin. |
+| autoPromotionHolds | [StageStatus.AutoPromotionHoldsEntry](#github-com-akuity-kargo-api-v1alpha1-StageStatus-AutoPromotionHoldsEntry) |  AutoPromotionHolds pause auto-promotion for specific FreightOrigins on this Stage after a user-directed promotion intentionally selects Freight other than the current auto-promotion candidate for the same origin. Each map entry pins a single origin keyed by the canonical string representation of the FreightOrigin. |
 
 
 ### StageStatus.AutoPromotionHoldsEntry {#github-com-akuity-kargo-api-v1alpha1-StageStatus-AutoPromotionHoldsEntry}

@@ -129,6 +129,7 @@ func AutoPromotionHoldIdentityMatches(
 		autoPromotionHoldTimesEqual(hold.CreatedAt, expected.CreatedAt)
 }
 
+// autoPromotionHoldTimesEqual checks if two *metav1.Time instances are equal, accounting for nil values.
 func autoPromotionHoldTimesEqual(lhs *metav1.Time, rhs *metav1.Time) bool {
 	switch {
 	case lhs == nil && rhs == nil:

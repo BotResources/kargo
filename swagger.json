@@ -8320,7 +8320,7 @@
           "type": "boolean"
         },
         "autoPromotionHolds": {
-          "description": "AutoPromotionHolds pause auto-promotion for specific FreightOrigins on\nthis Stage after a user-directed promotion intentionally selects an older\npiece of Freight. Each map entry pins a single origin keyed by the\ncanonical string representation of the FreightOrigin.",
+          "description": "AutoPromotionHolds pause auto-promotion for specific FreightOrigins on\nthis Stage after a user-directed promotion intentionally selects Freight\nother than the current auto-promotion candidate for the same origin. Each\nmap entry pins a single origin keyed by the canonical string\nrepresentation of the FreightOrigin.",
           "type": "object",
           "additionalProperties": {
             "$ref": "#/definitions/AutoPromotionHold"

@@ -1101,7 +1101,7 @@ func Test_server_promoteToStage(t *testing.T) {
 				},
 			},
 			{
-				name: "older freight creates pending auto-promotion hold",
+				name: "non-candidate freight creates pending auto-promotion hold",
 				clientBuilder: fake.NewClientBuilder().
 					WithObjects(testProject, testProjectConfig, testStage, testFreight, testNewerFreight).
 					WithStatusSubresource(testStage),
@@ -1152,7 +1152,7 @@ func Test_server_promoteToStage(t *testing.T) {
 				},
 			},
 			{
-				name: "older freight is rejected while active hold exists for origin",
+				name: "non-candidate freight is rejected while active hold exists for origin",
 				clientBuilder: fake.NewClientBuilder().WithObjects(
 					testProject,
 					testProjectConfig,
@@ -1214,7 +1214,7 @@ func Test_server_promoteToStage(t *testing.T) {
 				},
 			},
 			{
-				name: "older freight is rejected while pending hold exists for origin",
+				name: "non-candidate freight is rejected while pending hold exists for origin",
 				clientBuilder: fake.NewClientBuilder().WithObjects(
 					testProject,
 					testProjectConfig,

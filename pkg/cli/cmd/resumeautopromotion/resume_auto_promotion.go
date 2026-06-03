@@ -70,6 +70,7 @@ func (o *options) addFlags(cmd *cobra.Command) {
 		o.Config.Project,
 		"The project the stage belongs to. If not set, the default project will be used.",
 	)
+
 	option.Stage(cmd.Flags(), &o.Stage, "The stage with a held auto-promotion origin.")
 	cmd.Flags().StringVar(
 		&o.Origin,
@@ -77,6 +78,7 @@ func (o *options) addFlags(cmd *cobra.Command) {
 		"",
 		`The held origin to resume, formatted as "Warehouse/name".`,
 	)
+
 	_ = cmd.MarkFlagRequired(option.StageFlag)
 	_ = cmd.MarkFlagRequired(option.OriginFlag)
 }
@@ -86,6 +88,7 @@ func (o *options) validate() error {
 	o.Project = strings.TrimSpace(o.Project)
 	o.Stage = strings.TrimSpace(o.Stage)
 	o.Origin = strings.TrimSpace(o.Origin)
+
 	if o.Project == "" {
 		errs = append(errs, fmt.Errorf("%s is required", option.ProjectFlag))
 	}
@@ -97,6 +100,7 @@ func (o *options) validate() error {
 	} else if _, err := kargoapi.ParseFreightOriginKey(o.Origin); err != nil {
 		errs = append(errs, fmt.Errorf("invalid %s %q: %w", option.OriginFlag, o.Origin, err))
 	}
+
 	return errors.Join(errs...)
 }
 
@@ -123,6 +127,7 @@ func (o *options) run(ctx context.Context) error {
 	); err != nil {
 		return client.FormatAPIError("resume auto-promotion", err)
 	}
+
 	_, _ = fmt.Fprintln(o.Out, "Auto-promotion resumed.")
 	return nil
 }

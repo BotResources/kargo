@@ -397,8 +397,9 @@ export const ArtifactoryWebhookReceiverConfigSchema: GenMessage<ArtifactoryWebho
 /**
  * AutoPromotionHold pins a single FreightOrigin on a Stage, pausing
  * auto-promotion for that origin after a user-directed promotion intentionally
- * selects an older piece of Freight. Other origins continue to auto-promote
- * normally. The origin is identified by the enclosing map key.
+ * selects Freight other than the current auto-promotion candidate for the same
+ * origin. Other origins continue to auto-promote normally. The origin is
+ * identified by the enclosing map key.
  *
  * @generated from message github.com.akuity.kargo.api.v1alpha1.AutoPromotionHold
  */
@@ -4096,9 +4097,10 @@ export type StageStatus = Message<"github.com.akuity.kargo.api.v1alpha1.StageSta
 
   /**
    * AutoPromotionHolds pause auto-promotion for specific FreightOrigins on
-   * this Stage after a user-directed promotion intentionally selects an older
-   * piece of Freight. Each map entry pins a single origin keyed by the
-   * canonical string representation of the FreightOrigin.
+   * this Stage after a user-directed promotion intentionally selects Freight
+   * other than the current auto-promotion candidate for the same origin. Each
+   * map entry pins a single origin keyed by the canonical string
+   * representation of the FreightOrigin.
    *
    * @generated from field: map<string, github.com.akuity.kargo.api.v1alpha1.AutoPromotionHold> autoPromotionHolds = 16;
    */

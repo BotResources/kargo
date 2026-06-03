@@ -149,11 +149,11 @@ Valid policies are:
   continuous basis. This option is valid only when the `Stage` accepts `Freight`
   from _exactly one_ upstream `Stage`.
 
-When a user deliberately promotes older `Freight` to a `Stage`, Kargo pauses
-auto-promotion for that `Freight` origin on that `Stage`. This prevents
-automation from immediately moving the `Stage` forward again to the newest
-available `Freight`. Auto-promotion remains paused until a user promotes the
-current auto-promotion candidate or resumes it explicitly:
+When a user deliberately promotes `Freight` other than the current
+auto-promotion candidate to a `Stage`, Kargo pauses auto-promotion for that
+`Freight` origin on that `Stage`. This prevents automation from immediately
+moving the `Stage` back to that candidate. Auto-promotion remains paused until
+a user promotes the current auto-promotion candidate or resumes it explicitly:
 
 ```shell
 kargo resume-auto-promotion \
