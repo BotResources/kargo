@@ -1,7 +1,7 @@
 import { createClient } from '@connectrpc/connect';
 import { createConnectQueryKey } from '@connectrpc/connect-query';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 import { transportWithAuth } from '@ui/config/transport';
 import { queryCache } from '@ui/features/utils/cache';
@@ -66,6 +66,15 @@ export const useWatchFreight = (
 ) => {
   const client = useQueryClient();
 
+  // Keep the latest seed resourceVersion in a ref rather than an effect
+  // dependency. Each freight event writes back into the same queryFreight cache
+  // entry this value is derived from, so depending on it would abort and
+  // restart the watch on every event. The watch loop reads the freshest
+  // resourceVersion from the cache and only falls back to this seed for the
+  // initial connect.
+  const seedResourceVersionRef = useRef(resourceVersion);
+  seedResourceVersionRef.current = resourceVersion;
+
   useEffect(() => {
     if (!project || !enabled) {
       return;
@@ -78,7 +87,9 @@ export const useWatchFreight = (
 
       while (!cancel.signal.aborted) {
         const currentResourceVersion =
-          queryCache.freight.get(project, origins)?.resourceVersion || resourceVersion || '';
+          queryCache.freight.get(project, origins)?.resourceVersion ||
+          seedResourceVersionRef.current ||
+          '';
         const stream = promiseClient.watchFreight(
           {
             project,
@@ -149,5 +160,7 @@ export const useWatchFreight = (
     watchFreight().catch(() => undefined);
 
     return () => cancel.abort();
-  }, [client, enabled, origins, project, resourceVersion]);
+    // resourceVersion is intentionally excluded; it is read via
+    // seedResourceVersionRef so freight events don't restart the watch.
+  }, [client, enabled, origins, project]);
 };

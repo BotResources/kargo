@@ -37,6 +37,8 @@ func (s *server) ListPromotions(
 	if err := s.listForWatchSeed(ctx, "promotions", &list, client.InNamespace(project)); err != nil {
 		return nil, fmt.Errorf("list promotions: %w", err)
 	}
+	// Filter by Stage in-process; see filterPromotionsByStage for why the
+	// watch-seed list cannot push this down to the API server.
 	if stage != "" {
 		list.Items = filterPromotionsByStage(list.Items, stage)
 	}
@@ -99,6 +101,12 @@ func (s *server) listPromotions(c *gin.Context) {
 }
 
 // filterPromotionsByStage returns Promotions that target the specified Stage.
+//
+// Stage filtering is done in-process rather than via the PromotionsByStage
+// field index because the watch-seed list goes through listForWatchSeed's
+// uncached reader, which cannot serve controller-runtime field indexes. This
+// over-fetches the whole namespace, but it matches the (also unfiltered)
+// follow-up watch and keeps the returned ResourceVersion watchable.
 func filterPromotionsByStage(promotions []kargoapi.Promotion, stage string) []kargoapi.Promotion {
 	filtered := make([]kargoapi.Promotion, 0, len(promotions))
 	for _, promotion := range promotions {

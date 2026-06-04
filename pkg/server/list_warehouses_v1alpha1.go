@@ -125,10 +125,10 @@ func (s *server) watchWarehouses(c *gin.Context, project string, resourceVersion
 				logger.Debug("watch channel closed")
 				return
 			}
-			if watchErr := errorFromWatchEvent(e); watchErr != nil {
-				sendSSEWatchError(c, watchErr)
-				return
-			}
+			// convertAndSendWatchEvent surfaces watch.Error events itself, so
+			// no separate errorFromWatchEvent check is needed here (unlike the
+			// filtered Stage/Promotion handlers, which inspect the event before
+			// applying their event-type filter).
 			if !convertAndSendWatchEvent(c, e, (*kargoapi.Warehouse)(nil)) {
 				return
 			}

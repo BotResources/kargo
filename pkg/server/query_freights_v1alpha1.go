@@ -101,6 +101,8 @@ func (s *server) QueryFreight(
 		); err != nil {
 			return nil, fmt.Errorf("list freight: %w", err)
 		}
+		// Filter by origin in-process; see filterFreightByOrigins for why the
+		// watch-seed list cannot push this down to the API server.
 		freight = filterFreightByOrigins(freightList.Items, origins)
 		resourceVersion = resourceVersionForFreightList(freightList)
 	default:
@@ -140,6 +142,12 @@ func (s *server) QueryFreight(
 
 // filterFreightByOrigins returns Freight whose origin Warehouse is one of the
 // requested origins.
+//
+// Origin filtering is done in-process rather than via the FreightByWarehouse
+// field index because listFreightForQuery's watch-seed path uses an uncached
+// reader, which cannot serve controller-runtime field indexes. This
+// over-fetches the whole namespace, but it matches the (also unfiltered)
+// follow-up watch and keeps the returned ResourceVersion watchable.
 func filterFreightByOrigins(
 	freight []kargoapi.Freight,
 	origins []string,

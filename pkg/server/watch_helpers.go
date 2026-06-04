@@ -174,6 +174,14 @@ func convertAndSendWatchEvent[T any](c *gin.Context, e watch.Event, target T) bo
 // filtered watch event. Kubernetes server-side selectors send a DELETED event
 // when a previously matching object is modified so it no longer matches; this
 // helper mirrors that behavior for filters we must evaluate in-process.
+//
+// Because we hold no per-client matched set, we cannot tell whether a
+// non-matching MODIFIED object previously matched, so we emit a synthetic
+// DELETED for every non-matching MODIFIED event — including objects the client
+// never received an ADDED for. This over-emits DELETEs relative to a real
+// server-side selector, but a DELETE for an object the client is not tracking
+// is a harmless no-op. Achieving exact fidelity would require tracking sent
+// object identities per client, which is not worth the complexity here.
 func filteredWatchEventType(eventType watch.EventType, matches bool) (watch.EventType, bool) {
 	if matches {
 		return eventType, true

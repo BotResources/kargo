@@ -20,6 +20,15 @@ import (
 // returned by the API server today. Non-numeric item versions are ignored. If
 // no usable item version exists, we return an empty string and preserve the
 // previous watch behavior.
+//
+// In production the max-item fallback is effectively unreachable: the list+watch
+// seed endpoints read through listForWatchSeed's uncached reader, which always
+// returns a real list-level resource version, so the early return below wins.
+// The fallback only runs on the degraded path where no direct reader is wired
+// (tests, or no rest.Config) and the cached client reports "0"/"". There it is a
+// best effort: the max item version may be older than the apiserver's watch
+// window, in which case the follow-up watch simply restarts with a fresh list,
+// i.e. the pre-change behavior.
 func effectiveResourceVersion(rv string, itemVersions []string) string {
 	if rv != "" && rv != "0" {
 		return rv
