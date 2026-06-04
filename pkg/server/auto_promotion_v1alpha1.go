@@ -58,6 +58,14 @@ type resumeStageAutoPromotionRequest struct {
 // @Router /v1beta1/projects/{project}/stages/{stage}/auto-promotion/candidates [get]
 func (s *server) getStageAutoPromotionCandidates(c *gin.Context) {
 	ctx := c.Request.Context()
+	// Authorization is an implicit Stage read via the authorizing client in
+	// getRESTStage. Candidate calculation then reads ProjectConfig and the
+	// Stage's available Freight via the internal client (see
+	// getAutoPromotionCandidates). This is intentional and mirrors the
+	// getFreightLinks/getStageLinks pattern: a caller who can read a Stage is
+	// entitled to see the names and origins of the Freight that Stage can
+	// currently auto-promote (already visible via the Stage's own status), so we
+	// do not require separate Freight/ProjectConfig read permissions here.
 	stage, ok := s.getRESTStage(ctx, c.Param("project"), c.Param("stage"), c)
 	if !ok {
 		return
@@ -178,14 +186,9 @@ func (s *server) resumeStageAutoPromotion(c *gin.Context) {
 		))
 		return
 	}
-
-	if hold.State != kargoapi.AutoPromotionHoldStateActive {
-		_ = c.Error(libhttp.ErrorStr(
-			"Stage has no active auto-promotion hold for the requested origin",
-			http.StatusNotFound,
-		))
-		return
-	}
+	// State is a validated enum (Pending|Active), so reaching here means Active.
+	// The patch below re-verifies identity against live state, turning any
+	// concurrent change into a 409.
 	expectedHold := hold
 
 	changed, err := s.patchStageAutoPromotionHolds(ctx, key, func(status *kargoapi.StageStatus) bool {

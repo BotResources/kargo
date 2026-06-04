@@ -379,6 +379,11 @@ func (r *reconciler) Reconcile(
 		}
 	}
 
+	// Deployment gate: this controller is the single hard gate for holds. It
+	// re-reads the live Stage immediately before an auto-promotion starts (and
+	// again right after the Running transition, below) and aborts it if a hold
+	// now supersedes it, so a held auto-promotion can never run its promotion
+	// steps. The Stage controller deliberately does not duplicate this abort.
 	if freight != nil &&
 		promo.Spec.Source == kargoapi.PromotionSourceAuto &&
 		promo.Status.Phase != kargoapi.PromotionPhaseRunning {

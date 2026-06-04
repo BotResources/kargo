@@ -609,9 +609,12 @@ func (r *RegularStageReconciler) syncPromotions(
 		return newStatus, false, nil
 	}
 
-	if err := r.abortAutoPromotionsBlockedByHolds(ctx, stage, promotions); err != nil {
-		return newStatus, false, err
-	}
+	// NB: Auto-promotions that are superseded by a hold are NOT aborted here.
+	// The Promotion controller is the single hard gate: it re-reads the live
+	// Stage and aborts a held auto-promotion before any promotion steps run (see
+	// pkg/controller/promotions). Aborting here too would only mark such a
+	// Promotion terminal a reconcile cycle sooner, which eventual consistency
+	// already handles, so we keep this controller focused on Stage status.
 
 	// Sort the Promotions by phase and creation time to determine the current
 	// state of the Stage.
@@ -930,18 +933,16 @@ func (r *RegularStageReconciler) syncMissingPendingAutoPromotionHold(
 	origin string,
 	hold kargoapi.AutoPromotionHold,
 ) (map[string]kargoapi.AutoPromotionHold, bool, error) {
-	// A UID-less pending hold may have been written immediately before the API
-	// server returned a create error for its Promotion. Timestamp it and give the
-	// Promotion create path a short window to show up before abandoning the hold.
-	if hold.CreatedAt == nil {
-		holds, err := r.setPendingAutoPromotionHoldCreatedAtIfCurrent(ctx, stageKey, origin, hold)
-		return holds, true, err
-	}
-
-	// Once a hold has a Promotion UID, or the grace period has elapsed, a missing
-	// Promotion means the pending hold can never become active.
-	if hold.PromotionUID != "" ||
-		time.Since(hold.CreatedAt.Time) > pendingAutoPromotionHoldCreationGracePeriod {
+	// The API server stamps CreatedAt before it ever attempts to create the
+	// linked Promotion, so a pending hold reaching this point always has a
+	// creation time to age against. We only get here after a live read confirmed
+	// the Promotion is truly absent, so once the hold has learned a Promotion UID
+	// or its grace period has elapsed, the Promotion can never appear and the
+	// pending hold can never become active. (A hold with no CreatedAt at all is
+	// malformed and treated as already past its grace period.)
+	graceElapsed := hold.CreatedAt == nil ||
+		time.Since(hold.CreatedAt.Time) > pendingAutoPromotionHoldCreationGracePeriod
+	if hold.PromotionUID != "" || graceElapsed {
 		holds, removed, err := r.removeAutoPromotionHoldIfCurrent(ctx, stageKey, origin, hold)
 		if err != nil {
 			return nil, false, err
@@ -1011,33 +1012,6 @@ func (r *RegularStageReconciler) syncPendingAutoPromotionHold(
 	return holds, err
 }
 
-// setPendingAutoPromotionHoldCreatedAtIfCurrent timestamps malformed pending
-// holds instead of abandoning them immediately, preserving the same grace
-// period used for normally-created holds.
-func (r *RegularStageReconciler) setPendingAutoPromotionHoldCreatedAtIfCurrent(
-	ctx context.Context,
-	stageKey client.ObjectKey,
-	origin string,
-	expected kargoapi.AutoPromotionHold,
-) (map[string]kargoapi.AutoPromotionHold, error) {
-	now := metav1.Now()
-
-	holds, _, err := r.patchStageAutoPromotionHolds(ctx, stageKey, func(status *kargoapi.StageStatus) bool {
-		hold, ok := status.AutoPromotionHolds[origin]
-		if !ok ||
-			hold.State != kargoapi.AutoPromotionHoldStatePending ||
-			hold.CreatedAt != nil ||
-			!pendingAutoPromotionHoldMatchesSnapshot(hold, expected) {
-			return false
-		}
-		hold.CreatedAt = &now
-		status.AutoPromotionHolds[origin] = hold
-		return true
-	})
-
-	return holds, err
-}
-
 // pendingAutoPromotionHoldMatchesSnapshot allows a pending hold to learn the
 // UID of its linked Promotion while rejecting other identity or metadata drift.
 func pendingAutoPromotionHoldMatchesSnapshot(
@@ -1050,7 +1024,7 @@ func pendingAutoPromotionHoldMatchesSnapshot(
 		hold.State != snapshot.State ||
 		hold.Actor != snapshot.Actor ||
 		hold.Reason != snapshot.Reason ||
-		!autoPromotionHoldCreatedAtEqual(hold.CreatedAt, snapshot.CreatedAt) {
+		!api.AutoPromotionHoldTimesEqual(hold.CreatedAt, snapshot.CreatedAt) {
 		return false
 	}
 	return snapshot.PromotionUID == "" || hold.PromotionUID == snapshot.PromotionUID
@@ -1066,19 +1040,6 @@ func autoPromotionHoldMatchesExpected(
 		hold.Actor == expected.Actor &&
 		hold.Reason == expected.Reason &&
 		api.AutoPromotionHoldIdentityMatches(hold, expected)
-}
-
-// autoPromotionHoldCreatedAtEqual compares optional Kubernetes timestamps by
-// instant instead of pointer identity.
-func autoPromotionHoldCreatedAtEqual(lhs, rhs *metav1.Time) bool {
-	switch {
-	case lhs == nil && rhs == nil:
-		return true
-	case lhs == nil || rhs == nil:
-		return false
-	default:
-		return lhs.Time.Equal(rhs.Time)
-	}
 }
 
 // removeAutoPromotionHoldIfCurrent removes a hold only when the live hold still
@@ -1246,135 +1207,6 @@ func autoPromotionHoldMatchesClearAnnotation(
 	return hold.PromotionName == promotionName &&
 		hold.PromotionUID == promo.Annotations[kargoapi.AnnotationKeyClearAutoPromotionHoldPromotionUID] &&
 		(hold.CreatedAt == nil || !promo.CreationTimestamp.Time.Before(hold.CreatedAt.Time))
-}
-
-// abortAutoPromotionsBlockedByHolds aborts pending auto Promotions that lost
-// the race to a newer auto-promotion hold. Running Promotions are left alone.
-func (r *RegularStageReconciler) abortAutoPromotionsBlockedByHolds(
-	ctx context.Context,
-	stage *kargoapi.Stage,
-	promotions *kargoapi.PromotionList,
-) error {
-	var liveStage *kargoapi.Stage
-	for i := range promotions.Items {
-		promo := &promotions.Items[i]
-		if promo.Spec.Source != kargoapi.PromotionSourceAuto ||
-			(promo.Status.Phase != "" &&
-				promo.Status.Phase != kargoapi.PromotionPhasePending) {
-			continue
-		}
-
-		freight := &kargoapi.Freight{}
-		if err := r.client.Get(
-			ctx,
-			client.ObjectKey{Namespace: promo.Namespace, Name: promo.Spec.Freight},
-			freight,
-		); err != nil {
-			if apierrors.IsNotFound(err) {
-				continue
-			}
-			return fmt.Errorf("error getting Freight %q for Promotion %q: %w", promo.Spec.Freight, promo.Name, err)
-		}
-		if liveStage == nil {
-			var err error
-			liveStage, err = r.getLiveStage(ctx, client.ObjectKeyFromObject(stage))
-			if err != nil {
-				if apierrors.IsNotFound(err) {
-					return nil
-				}
-				return err
-			}
-		}
-		hold, held := liveStage.Status.GetAutoPromotionHold(freight.Origin)
-		// A hold pinning the same Freight is not in conflict with this
-		// Promotion. Only newer auto-promotions for that origin are blocked.
-		if !held || hold.Freight.Name == freight.Name {
-			continue
-		}
-
-		livePromo, aborted, err := r.abortAutoPromotionIfPending(
-			ctx,
-			client.ObjectKey{Namespace: promo.Namespace, Name: promo.Name},
-			client.ObjectKeyFromObject(stage),
-			freight.Origin,
-		)
-		if err != nil {
-			return fmt.Errorf("error aborting Promotion %q blocked by auto-promotion hold: %w", promo.Name, err)
-		}
-		if aborted {
-			promo.Status = livePromo.Status
-		}
-	}
-	return nil
-}
-
-// abortAutoPromotionIfPending aborts only auto-created Promotions that are
-// still pending and still blocked by a live Stage hold. That avoids aborting a
-// Promotion that has already started running, or one whose hold was cleared
-// while the cache was behind.
-func (r *RegularStageReconciler) abortAutoPromotionIfPending(
-	ctx context.Context,
-	key client.ObjectKey,
-	stageKey client.ObjectKey,
-	origin kargoapi.FreightOrigin,
-) (*kargoapi.Promotion, bool, error) {
-	var (
-		aborted bool
-		live    *kargoapi.Promotion
-	)
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		aborted = false
-		var err error
-		live, err = r.getLivePromotion(ctx, key)
-		if err != nil {
-			return err
-		}
-		if live == nil {
-			return nil
-		}
-		if live.Spec.Source != kargoapi.PromotionSourceAuto ||
-			(live.Status.Phase != "" &&
-				live.Status.Phase != kargoapi.PromotionPhasePending) {
-			return nil
-		}
-		blocked, err := r.liveStageHasAutoPromotionHold(ctx, stageKey, origin)
-		if err != nil {
-			return err
-		}
-		if !blocked {
-			return nil
-		}
-
-		original := live.DeepCopy()
-		now := metav1.Now()
-		live.Status.Phase = kargoapi.PromotionPhaseAborted
-		live.Status.Message = api.AutoPromotionBlockedByHoldMessage
-		live.Status.FinishedAt = &now
-		aborted = true
-		return r.client.Status().Patch(
-			ctx,
-			live,
-			client.MergeFromWithOptions(original, client.MergeFromWithOptimisticLock{}),
-		)
-	})
-	return live, aborted, err
-}
-
-// liveStageHasAutoPromotionHold checks the API-server view of a Stage hold.
-func (r *RegularStageReconciler) liveStageHasAutoPromotionHold(
-	ctx context.Context,
-	key client.ObjectKey,
-	origin kargoapi.FreightOrigin,
-) (bool, error) {
-	liveStage, err := r.getLiveStage(ctx, key)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	_, held := liveStage.Status.GetAutoPromotionHold(origin)
-	return held, nil
 }
 
 // assessHealth assesses the health of a Stage based on the health checks from
@@ -2341,15 +2173,15 @@ func (r *RegularStageReconciler) autoPromoteFreight(
 	// Check if there is any new Freight which can be auto-promoted.
 	for _, req := range stage.Spec.RequestedFreight {
 		origin := req.Origin.String()
-		if _, held := newStatus.AutoPromotionHolds[origin]; held {
-			logger.Debug("auto-promotion is blocked by an auto-promotion hold", "origin", origin)
-			continue
-		}
+		// Creation gate: never create an auto-promotion for a held origin. This
+		// is load-bearing, not just hygiene. A held auto-promotion is aborted by
+		// the Promotion controller before its steps run, and that abort is
+		// retryable (see autoPromotionTerminalAllowsRetry), so without this skip
+		// the controller would create and abort Promotions in a tight loop for as
+		// long as the hold is active. liveStage is read from the API server, so a
+		// just-created hold is honored immediately.
 		if _, held := liveStage.Status.AutoPromotionHolds[origin]; held {
-			logger.Debug(
-				"auto-promotion is blocked by a live auto-promotion hold",
-				"origin", origin,
-			)
+			logger.Debug("auto-promotion is blocked by an auto-promotion hold", "origin", origin)
 			continue
 		}
 

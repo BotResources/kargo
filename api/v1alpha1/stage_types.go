@@ -489,6 +489,7 @@ type AutoPromotionHold struct {
 	Actor string `json:"actor,omitempty" protobuf:"bytes,5,opt,name=actor"`
 	// Reason is a free-form human-readable explanation of why the hold was
 	// created.
+	// +kubebuilder:validation:MaxLength=1024
 	Reason string `json:"reason,omitempty" protobuf:"bytes,6,opt,name=reason"`
 	// CreatedAt is the time at which the hold was created.
 	CreatedAt *metav1.Time `json:"createdAt,omitempty" protobuf:"bytes,7,opt,name=createdAt"`

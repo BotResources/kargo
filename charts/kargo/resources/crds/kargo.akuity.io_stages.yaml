@@ -678,6 +678,7 @@ spec:
                       description: |-
                         Reason is a free-form human-readable explanation of why the hold was
                         created.
+                      maxLength: 1024
                       type: string
                     state:
                       description: State is the current lifecycle state of the hold.

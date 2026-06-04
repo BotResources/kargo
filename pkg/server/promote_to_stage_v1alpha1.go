@@ -476,33 +476,16 @@ func (s *server) createPendingAutoPromotionHold(
 		CreatedAt:     &now,
 	}
 
+	// createStagePromotion already verified (once, up front) that the selected
+	// Freight differs from the current auto-promotion candidate, so this is a
+	// rollback. We deliberately do NOT re-derive the candidate inside the retry
+	// loop: if it shifted in the meantime it only shifted to a still-newer
+	// Freight, which the pending hold we are about to write blocks just the same.
+	// The single precondition that must hold against live state is that we never
+	// overwrite an existing hold for this origin.
 	var existingHold *kargoapi.AutoPromotionHold
-	var candidateErr error
-	var candidateConflict error
-
-	// The status patch callback can only report whether it changed the Stage.
-	// Capture conflict details so callers still receive precise 409s instead of
-	// a generic "unchanged" result.
 	createdHold, err := s.patchStageAutoPromotionHoldsWithStage(ctx, key, func(liveStage *kargoapi.Stage) bool {
 		existingHold = nil
-		candidateErr = nil
-		candidateConflict = nil
-
-		liveCandidate, liveCandidateErr := s.getAutoPromotionCandidate(ctx, liveStage, freight.Origin)
-		if liveCandidateErr != nil {
-			candidateErr = fmt.Errorf("get live auto-promotion candidate: %w", liveCandidateErr)
-			return false
-		}
-		if candidateConflict = expectedAutoCandidateConflict(
-			opts.ExpectedAutoCandidate,
-			liveCandidate,
-		); candidateConflict != nil {
-			return false
-		}
-		if liveCandidate == nil || liveCandidate.Name == freight.Name {
-			return false
-		}
-
 		if statusHold, ok := liveStage.Status.GetAutoPromotionHold(freight.Origin); ok {
 			existing := statusHold
 			existingHold = &existing
@@ -512,12 +495,6 @@ func (s *server) createPendingAutoPromotionHold(
 	})
 	if err != nil {
 		return kargoapi.AutoPromotionHold{}, false, fmt.Errorf("create auto-promotion hold: %w", err)
-	}
-	if candidateErr != nil {
-		return kargoapi.AutoPromotionHold{}, false, candidateErr
-	}
-	if candidateConflict != nil {
-		return kargoapi.AutoPromotionHold{}, false, candidateConflict
 	}
 	if existingHold != nil {
 		return kargoapi.AutoPromotionHold{}, false, newStagePromotionConflictError(
@@ -669,8 +646,12 @@ func annotateClearAutoPromotionHold(
 }
 
 // promotionCreateMayHavePersisted reports whether a create error may have been
-// returned after the API server persisted the Promotion. Ambiguous errors keep
-// the pending hold so controller recovery can reconcile the partial state.
+// returned after the API server persisted the Promotion. This guards a real
+// correctness boundary: if the Promotion actually persisted but we deleted the
+// pending hold, nothing would block auto-promotion from stomping the rollback.
+// So when in doubt we KEEP the hold and let the Stage controller reconcile the
+// partial state (it abandons a pending hold whose Promotion never appears after
+// a grace period).
 func promotionCreateMayHavePersisted(err error) bool {
 	if apierrors.IsAlreadyExists(err) {
 		return true
@@ -682,6 +663,9 @@ func promotionCreateMayHavePersisted(err error) bool {
 		apierrors.IsUnexpectedServerError(err) {
 		return true
 	}
+	// Anything that is not a structured Kubernetes API error (e.g. a transport
+	// failure) is ambiguous about whether the write landed; bias toward keeping
+	// the hold.
 	var statusErr *apierrors.StatusError
 	return !errors.As(err, &statusErr)
 }

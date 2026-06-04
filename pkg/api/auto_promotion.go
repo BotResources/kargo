@@ -126,11 +126,13 @@ func AutoPromotionHoldIdentityMatches(
 		hold.Freight.Origin.Equals(&expected.Freight.Origin) &&
 		hold.PromotionName == expected.PromotionName &&
 		hold.PromotionUID == expected.PromotionUID &&
-		autoPromotionHoldTimesEqual(hold.CreatedAt, expected.CreatedAt)
+		AutoPromotionHoldTimesEqual(hold.CreatedAt, expected.CreatedAt)
 }
 
-// autoPromotionHoldTimesEqual checks if two *metav1.Time instances are equal, accounting for nil values.
-func autoPromotionHoldTimesEqual(lhs *metav1.Time, rhs *metav1.Time) bool {
+// AutoPromotionHoldTimesEqual reports whether two optional Kubernetes timestamps
+// refer to the same instant, treating two nil values as equal. It is the single
+// canonical comparator shared by every auto-promotion hold identity check.
+func AutoPromotionHoldTimesEqual(lhs *metav1.Time, rhs *metav1.Time) bool {
 	switch {
 	case lhs == nil && rhs == nil:
 		return true
