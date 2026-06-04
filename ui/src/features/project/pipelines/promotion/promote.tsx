@@ -173,7 +173,6 @@ export const Promote = (props: PromoteProps) => {
               value={reason}
               onChange={(event) => setReason(event.target.value)}
               maxLength={1024}
-              showCount
               autoSize={{ minRows: 2, maxRows: 4 }}
             />
           )}
@@ -200,11 +199,11 @@ export const Promote = (props: PromoteProps) => {
         </Flex>
       }
     >
-      <div className='-mt-4'>
+      <div className='-mt-6'>
         {isCheckingAutoPromotionCandidate && (
           <Alert
-            className='mb-4'
-            showIcon
+            className='-mx-6'
+            banner
             type='info'
             message='Checking the current auto-promotion candidate.'
             description='Promotion is disabled until Kargo can show whether this will pause auto-promotion.'
@@ -212,25 +211,24 @@ export const Promote = (props: PromoteProps) => {
         )}
 
         {isPromotingNonCandidate && (
-          <div className='mb-4'>
-            <Alert
-              showIcon
-              type='warning'
-              message={
-                <>
-                  This is not the current auto-promotion candidate. Current candidate is{' '}
-                  {candidateFreightLink}.
-                </>
-              }
-              description={`If this Promotion succeeds, auto-promotion for ${selectedOriginLabel} will pause.`}
-            />
-          </div>
+          <Alert
+            className='-mx-6'
+            banner
+            type='warning'
+            message={
+              <>
+                This is not the current auto-promotion candidate. Current candidate is{' '}
+                {candidateFreightLink}.
+              </>
+            }
+            description={`If this Promotion succeeds, auto-promotion for ${selectedOriginLabel} will pause.`}
+          />
         )}
 
         {willResumeOnSuccess && (
           <Alert
-            className='mb-4'
-            showIcon
+            className='-mx-6'
+            banner
             type='info'
             message={`This is the current auto-promotion candidate for ${selectedOriginLabel}.`}
             description='Auto-promotion will resume for this origin if the Promotion succeeds.'

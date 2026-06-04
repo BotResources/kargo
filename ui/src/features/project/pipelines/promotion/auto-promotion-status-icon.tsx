@@ -28,7 +28,7 @@ export const AutoPromotionStatusIcon = ({
     (entry) => entry.hold.state === autoPromotionHoldStatePending
   );
 
-  const icon = hasActiveHold ? faPause : hasPendingHold ? faHourglassHalf : faBolt;
+  const icon = hasActiveHold ? faPause : hasPendingHold ? faHourglassHalf : undefined;
   const label = hasActiveHold
     ? 'Auto-promotion paused after rollback'
     : hasPendingHold
@@ -38,8 +38,15 @@ export const AutoPromotionStatusIcon = ({
         : 'Auto-promotion hold exists, but auto-promotion is disabled';
 
   return (
-    <span aria-label={label} className='inline-flex mr-1'>
-      <FontAwesomeIcon icon={icon} className='text-[10px]' />
+    <span title={label} aria-label={label} className='inline-flex mr-1.5 relative'>
+      <FontAwesomeIcon icon={faBolt} className='text-[10px]' />
+      {icon && (
+        <FontAwesomeIcon
+          icon={icon}
+          className='text-[7px] absolute'
+          style={{ bottom: '-5px', right: '-3px' }}
+        />
+      )}
     </span>
   );
 };

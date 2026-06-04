@@ -182,8 +182,7 @@ export const ResumeAutoPromotionDrawer = ({
         </Flex>
       }
       footer={
-        <Flex justify='space-between' gap={12}>
-          <Button onClick={onClose}>Cancel</Button>
+        <Flex justify='flex-end'>
           <Button
             type='primary'
             icon={<FontAwesomeIcon icon={faPlay} />}
@@ -196,9 +195,9 @@ export const ResumeAutoPromotionDrawer = ({
         </Flex>
       }
     >
-      <Flex vertical gap={16}>
+      <div className='-mt-6 -mx-6'>
         <Alert
-          showIcon
+          banner
           type='info'
           message='Resuming clears the active hold for one Freight origin.'
           description='Kargo will evaluate auto-promotion normally after the hold is cleared. Resume does not directly create a Promotion.'
@@ -206,13 +205,14 @@ export const ResumeAutoPromotionDrawer = ({
 
         {activeEntries.length === 0 && (
           <Alert
-            showIcon
+            banner
             type='warning'
             message='No active auto-promotion hold can be resumed.'
             description='A pending hold is still waiting for its rollback Promotion to settle.'
           />
         )}
-
+      </div>
+      <Flex vertical gap={16} className='mt-4'>
         {activeEntries.length === 1 && selectedEntry && renderHoldSummary(selectedEntry)}
 
         {activeEntries.length > 1 && (
