@@ -333,10 +333,8 @@ kubectl patch stage multi-origin-holds \
       ],
       "autoPromotionHolds": {
         "${ORIGIN_KEY}": {
-          "freight": {
-            "name": "${FREIGHT_V001}",
-            "origin": {"kind": "Warehouse", "name": "auto-hold"}
-          },
+          "freightName": "${FREIGHT_V001}",
+          "origin": {"kind": "Warehouse", "name": "auto-hold"},
           "state": "Active",
           "promotionName": "multi-origin-holds.frontend-rollback",
           "promotionUID": "11111111-1111-1111-1111-111111111111",
@@ -345,10 +343,8 @@ kubectl patch stage multi-origin-holds \
           "createdAt": "${NOW}"
         },
         "${API_ORIGIN_KEY}": {
-          "freight": {
-            "name": "${API_FREIGHT_V001}",
-            "origin": {"kind": "Warehouse", "name": "auto-hold-api"}
-          },
+          "freightName": "${API_FREIGHT_V001}",
+          "origin": {"kind": "Warehouse", "name": "auto-hold-api"},
           "state": "Active",
           "promotionName": "multi-origin-holds.api-rollback",
           "promotionUID": "22222222-2222-2222-2222-222222222222",
