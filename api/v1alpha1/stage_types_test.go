@@ -1040,8 +1040,9 @@ func TestStageStatus_GetAutoPromotionHold(t *testing.T) {
 		Name: "fake-warehouse",
 	}
 	hold := AutoPromotionHold{
-		Freight: FreightReference{Name: "fake-freight", Origin: origin},
-		State:   AutoPromotionHoldStateActive,
+		FreightName: "fake-freight",
+		Origin:      origin,
+		State:       AutoPromotionHoldStateActive,
 	}
 
 	testCases := []struct {

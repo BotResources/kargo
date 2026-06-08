@@ -253,8 +253,8 @@ func TestReconcile(t *testing.T) {
 						},
 						AutoPromotionHolds: map[string]kargoapi.AutoPromotionHold{
 							"Warehouse/fake-warehouse": {
-								Freight: kargoapi.FreightReference{Name: "older-freight"},
-								State:   kargoapi.AutoPromotionHoldStateActive,
+								FreightName: "older-freight",
+								State:       kargoapi.AutoPromotionHoldStateActive,
 							},
 						},
 					},
@@ -325,8 +325,8 @@ func TestReconcile(t *testing.T) {
 							},
 							AutoPromotionHolds: map[string]kargoapi.AutoPromotionHold{
 								"Warehouse/fake-warehouse": {
-									Freight: kargoapi.FreightReference{Name: "older-freight"},
-									State:   kargoapi.AutoPromotionHoldStateActive,
+									FreightName: "older-freight",
+									State:       kargoapi.AutoPromotionHoldStateActive,
 								},
 							},
 						},
@@ -397,8 +397,8 @@ func TestReconcile(t *testing.T) {
 							CurrentPromotion: &kargoapi.PromotionReference{Name: "fake-promo"},
 							AutoPromotionHolds: map[string]kargoapi.AutoPromotionHold{
 								"Warehouse/fake-warehouse": {
-									Freight: kargoapi.FreightReference{Name: "older-freight"},
-									State:   kargoapi.AutoPromotionHoldStateActive,
+									FreightName: "older-freight",
+									State:       kargoapi.AutoPromotionHoldStateActive,
 								},
 							},
 						},
@@ -475,8 +475,8 @@ func TestReconcile(t *testing.T) {
 						CurrentPromotion: &kargoapi.PromotionReference{Name: "fake-promo"},
 						AutoPromotionHolds: map[string]kargoapi.AutoPromotionHold{
 							"Warehouse/fake-warehouse": {
-								Freight: kargoapi.FreightReference{Name: "older-freight"},
-								State:   kargoapi.AutoPromotionHoldStateActive,
+								FreightName: "older-freight",
+								State:       kargoapi.AutoPromotionHoldStateActive,
 							},
 						},
 					},

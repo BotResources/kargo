@@ -4989,8 +4989,8 @@
     "AutoPromotionCandidate": {
       "type": "object",
       "properties": {
-        "freight": {
-          "$ref": "#/definitions/FreightReference"
+        "freightName": {
+          "type": "string"
         },
         "origin": {
           "$ref": "#/definitions/FreightOrigin"
@@ -6596,11 +6596,15 @@
           "description": "CreatedAt is the time at which the hold was created.",
           "type": "string"
         },
-        "freight": {
-          "description": "Freight is a reference to the Freight that was selected by the operator\nwhen the hold was created.\n+kubebuilder:validation:Required",
+        "freightName": {
+          "description": "FreightName is the name of the Freight that was selected by the operator\nwhen the hold was created.\n+kubebuilder:validation:Required",
+          "type": "string"
+        },
+        "origin": {
+          "description": "Origin describes the kind of Freight pinned by this hold in terms of its\norigin. It matches the enclosing map key.\n+kubebuilder:validation:Required",
           "allOf": [
             {
-              "$ref": "#/definitions/FreightReference"
+              "$ref": "#/definitions/FreightOrigin"
             }
           ]
         },
@@ -6613,7 +6617,7 @@
           "type": "string"
         },
         "reason": {
-          "description": "Reason is a free-form human-readable explanation of why the hold was\ncreated.",
+          "description": "Reason is a free-form human-readable explanation of why the hold was\ncreated.\n+kubebuilder:validation:MaxLength=1024",
           "type": "string"
         },
         "state": {
@@ -6622,7 +6626,8 @@
         }
       },
       "required": [
-        "freight",
+        "freightName",
+        "origin",
         "state"
       ]
     },

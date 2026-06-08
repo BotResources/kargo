@@ -22,13 +22,19 @@ type AutoPromotionHold struct {
 	// CreatedAt is the time at which the hold was created.
 	CreatedAt string `json:"createdAt,omitempty"`
 
-	// Freight is a reference to the Freight that was selected by the operator
+	// FreightName is the name of the Freight that was selected by the operator
 	// when the hold was created.
 	// +kubebuilder:validation:Required
 	// Required: true
-	Freight struct {
-		FreightReference
-	} `json:"freight"`
+	FreightName *string `json:"freightName"`
+
+	// Origin describes the kind of Freight pinned by this hold in terms of its
+	// origin. It matches the enclosing map key.
+	// +kubebuilder:validation:Required
+	// Required: true
+	Origin struct {
+		FreightOrigin
+	} `json:"origin"`
 
 	// PromotionName is the name of the rollback Promotion associated
 	// with this hold, when applicable.
@@ -40,6 +46,7 @@ type AutoPromotionHold struct {
 
 	// Reason is a free-form human-readable explanation of why the hold was
 	// created.
+	// +kubebuilder:validation:MaxLength=1024
 	Reason string `json:"reason,omitempty"`
 
 	// State is the current lifecycle state of the hold.
@@ -52,7 +59,11 @@ type AutoPromotionHold struct {
 func (m *AutoPromotionHold) Validate(formats strfmt.Registry) error {
 	var res []error
 
-	if err := m.validateFreight(formats); err != nil {
+	if err := m.validateFreightName(formats); err != nil {
+		res = append(res, err)
+	}
+
+	if err := m.validateOrigin(formats); err != nil {
 		res = append(res, err)
 	}
 
@@ -66,7 +77,16 @@ func (m *AutoPromotionHold) Validate(formats strfmt.Registry) error {
 	return nil
 }
 
-func (m *AutoPromotionHold) validateFreight(formats strfmt.Registry) error {
+func (m *AutoPromotionHold) validateFreightName(formats strfmt.Registry) error {
+
+	if err := validate.Required("freightName", "body", m.FreightName); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (m *AutoPromotionHold) validateOrigin(formats strfmt.Registry) error {
 
 	return nil
 }
@@ -84,7 +104,7 @@ func (m *AutoPromotionHold) validateState(formats strfmt.Registry) error {
 func (m *AutoPromotionHold) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
 	var res []error
 
-	if err := m.contextValidateFreight(ctx, formats); err != nil {
+	if err := m.contextValidateOrigin(ctx, formats); err != nil {
 		res = append(res, err)
 	}
 
@@ -94,7 +114,7 @@ func (m *AutoPromotionHold) ContextValidate(ctx context.Context, formats strfmt.
 	return nil
 }
 
-func (m *AutoPromotionHold) contextValidateFreight(ctx context.Context, formats strfmt.Registry) error {
+func (m *AutoPromotionHold) contextValidateOrigin(ctx context.Context, formats strfmt.Registry) error {
 
 	return nil
 }

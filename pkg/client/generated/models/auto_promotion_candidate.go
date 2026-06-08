@@ -16,8 +16,8 @@ import (
 // swagger:model AutoPromotionCandidate
 type AutoPromotionCandidate struct {
 
-	// freight
-	Freight *FreightReference `json:"freight,omitempty"`
+	// freight name
+	FreightName string `json:"freightName,omitempty"`
 
 	// origin
 	Origin *FreightOrigin `json:"origin,omitempty"`
@@ -27,10 +27,6 @@ type AutoPromotionCandidate struct {
 func (m *AutoPromotionCandidate) Validate(formats strfmt.Registry) error {
 	var res []error
 
-	if err := m.validateFreight(formats); err != nil {
-		res = append(res, err)
-	}
-
 	if err := m.validateOrigin(formats); err != nil {
 		res = append(res, err)
 	}
@@ -38,29 +34,6 @@ func (m *AutoPromotionCandidate) Validate(formats strfmt.Registry) error {
 	if len(res) > 0 {
 		return errors.CompositeValidationError(res...)
 	}
-	return nil
-}
-
-func (m *AutoPromotionCandidate) validateFreight(formats strfmt.Registry) error {
-	if swag.IsZero(m.Freight) { // not required
-		return nil
-	}
-
-	if m.Freight != nil {
-		if err := m.Freight.Validate(formats); err != nil {
-			ve := new(errors.Validation)
-			if stderrors.As(err, &ve) {
-				return ve.ValidateName("freight")
-			}
-			ce := new(errors.CompositeError)
-			if stderrors.As(err, &ce) {
-				return ce.ValidateName("freight")
-			}
-
-			return err
-		}
-	}
-
 	return nil
 }
 
@@ -91,10 +64,6 @@ func (m *AutoPromotionCandidate) validateOrigin(formats strfmt.Registry) error {
 func (m *AutoPromotionCandidate) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
 	var res []error
 
-	if err := m.contextValidateFreight(ctx, formats); err != nil {
-		res = append(res, err)
-	}
-
 	if err := m.contextValidateOrigin(ctx, formats); err != nil {
 		res = append(res, err)
 	}
@@ -102,31 +71,6 @@ func (m *AutoPromotionCandidate) ContextValidate(ctx context.Context, formats st
 	if len(res) > 0 {
 		return errors.CompositeValidationError(res...)
 	}
-	return nil
-}
-
-func (m *AutoPromotionCandidate) contextValidateFreight(ctx context.Context, formats strfmt.Registry) error {
-
-	if m.Freight != nil {
-
-		if swag.IsZero(m.Freight) { // not required
-			return nil
-		}
-
-		if err := m.Freight.ContextValidate(ctx, formats); err != nil {
-			ve := new(errors.Validation)
-			if stderrors.As(err, &ve) {
-				return ve.ValidateName("freight")
-			}
-			ce := new(errors.CompositeError)
-			if stderrors.As(err, &ce) {
-				return ce.ValidateName("freight")
-			}
-
-			return err
-		}
-	}
-
 	return nil
 }
 

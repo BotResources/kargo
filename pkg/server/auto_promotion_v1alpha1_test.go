@@ -120,7 +120,7 @@ func Test_server_getStageAutoPromotionCandidates(t *testing.T) {
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 				require.Len(t, resp.Candidates, 1)
 				require.True(t, resp.Candidates[0].Origin.Equals(&origin))
-				require.Equal(t, newFreight.Name, resp.Candidates[0].Freight.Name)
+				require.Equal(t, newFreight.Name, resp.Candidates[0].FreightName)
 			},
 		}, {
 			name: "honors MatchUpstream currently-in filtering",
@@ -146,7 +146,7 @@ func Test_server_getStageAutoPromotionCandidates(t *testing.T) {
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 				require.Len(t, resp.Candidates, 1)
 				require.True(t, resp.Candidates[0].Origin.Equals(&origin))
-				require.Equal(t, currentUpstreamFreight.Name, resp.Candidates[0].Freight.Name)
+				require.Equal(t, currentUpstreamFreight.Name, resp.Candidates[0].FreightName)
 			},
 		}, {
 			name: "returns no candidates when auto-promotion is disabled",
@@ -195,11 +195,9 @@ func Test_server_resumeStageAutoPromotion(t *testing.T) {
 		Status: kargoapi.StageStatus{
 			AutoPromotionHolds: map[string]kargoapi.AutoPromotionHold{
 				origin.String(): {
-					Freight: kargoapi.FreightReference{
-						Name:   "old-freight",
-						Origin: origin,
-					},
-					State: kargoapi.AutoPromotionHoldStateActive,
+					FreightName: "old-freight",
+					Origin:      origin,
+					State:       kargoapi.AutoPromotionHoldStateActive,
 				},
 			},
 		},
@@ -212,11 +210,9 @@ func Test_server_resumeStageAutoPromotion(t *testing.T) {
 	stageWithTwoHolds := stageWithHold.DeepCopy()
 	stageWithTwoHolds.Status.AutoPromotionHolds[otherOrigin.String()] =
 		kargoapi.AutoPromotionHold{
-			Freight: kargoapi.FreightReference{
-				Name:   "other-freight",
-				Origin: otherOrigin,
-			},
-			State: kargoapi.AutoPromotionHoldStateActive,
+			FreightName: "other-freight",
+			Origin:      otherOrigin,
+			State:       kargoapi.AutoPromotionHoldStateActive,
 		}
 
 	testRESTEndpoint(

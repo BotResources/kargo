@@ -5,17 +5,21 @@
  * REST API for Kargo
  * OpenAPI spec version: v1alpha1
  */
-import type { FreightReference } from './freightReference';
+import type { FreightOrigin } from './freightOrigin';
 
 export interface AutoPromotionHold {
   /** Actor is an identifier for the user who caused the hold to be created. */
   actor?: string;
   /** CreatedAt is the time at which the hold was created. */
   createdAt?: string;
-  /** Freight is a reference to the Freight that was selected by the operator
+  /** FreightName is the name of the Freight that was selected by the operator
 when the hold was created.
 +kubebuilder:validation:Required */
-  freight: FreightReference;
+  freightName: string;
+  /** Origin describes the kind of Freight pinned by this hold in terms of its
+origin. It matches the enclosing map key.
++kubebuilder:validation:Required */
+  origin: FreightOrigin;
   /** PromotionName is the name of the rollback Promotion associated
 with this hold, when applicable. */
   promotionName?: string;
@@ -23,7 +27,8 @@ with this hold, when applicable. */
 prevent an older failed rollback from clearing a newer hold. */
   promotionUID?: string;
   /** Reason is a free-form human-readable explanation of why the hold was
-created. */
+created.
++kubebuilder:validation:MaxLength=1024 */
   reason?: string;
   /** State is the current lifecycle state of the hold.
 +kubebuilder:validation:Required */

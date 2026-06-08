@@ -1,13 +1,17 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	kargoapi "github.com/akuity/kargo/api/v1alpha1"
 )
@@ -24,15 +28,104 @@ func TestIsAutoPromotionEnabled(t *testing.T) {
 		},
 	}
 	testCases := []struct {
-		name    string
-		objects []runtime.Object
-		assert  func(*testing.T, bool, error)
+		name        string
+		objects     []runtime.Object
+		interceptor interceptor.Funcs
+		assert      func(*testing.T, bool, error)
 	}{
 		{
 			name: "disabled without ProjectConfig",
 			assert: func(t *testing.T, enabled bool, err error) {
 				require.NoError(t, err)
 				require.False(t, enabled)
+			},
+		},
+		{
+			name: "error getting ProjectConfig",
+			interceptor: interceptor.Funcs{
+				Get: func(
+					context.Context,
+					client.WithWatch,
+					client.ObjectKey,
+					client.Object,
+					...client.GetOption,
+				) error {
+					return errors.New("something went wrong")
+				},
+			},
+			assert: func(t *testing.T, enabled bool, err error) {
+				require.ErrorContains(t, err, "something went wrong")
+				require.False(t, enabled)
+			},
+		},
+		{
+			name: "disabled with empty promotion policies",
+			objects: []runtime.Object{
+				&kargoapi.ProjectConfig{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "fake-project",
+						Namespace: "fake-project",
+					},
+					Spec: kargoapi.ProjectConfigSpec{
+						PromotionPolicies: []kargoapi.PromotionPolicy{},
+					},
+				},
+			},
+			assert: func(t *testing.T, enabled bool, err error) {
+				require.NoError(t, err)
+				require.False(t, enabled)
+			},
+		},
+		{
+			name: "enabled by deprecated Stage field",
+			objects: []runtime.Object{
+				&kargoapi.ProjectConfig{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "fake-project",
+						Namespace: "fake-project",
+					},
+					Spec: kargoapi.ProjectConfigSpec{
+						PromotionPolicies: []kargoapi.PromotionPolicy{{
+							Stage:                "fake-stage", // nolint:staticcheck
+							AutoPromotionEnabled: true,
+						}},
+					},
+				},
+			},
+			assert: func(t *testing.T, enabled bool, err error) {
+				require.NoError(t, err)
+				require.True(t, enabled)
+			},
+		},
+		{
+			name: "returns first matching policy for the Stage",
+			objects: []runtime.Object{
+				&kargoapi.ProjectConfig{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "fake-project",
+						Namespace: "fake-project",
+					},
+					Spec: kargoapi.ProjectConfigSpec{
+						PromotionPolicies: []kargoapi.PromotionPolicy{
+							{
+								StageSelector:        &kargoapi.PromotionPolicySelector{Name: "other-stage"},
+								AutoPromotionEnabled: false,
+							},
+							{
+								StageSelector:        &kargoapi.PromotionPolicySelector{Name: "fake-stage"},
+								AutoPromotionEnabled: true,
+							},
+							{
+								StageSelector:        &kargoapi.PromotionPolicySelector{Name: "fake-stage"},
+								AutoPromotionEnabled: false,
+							},
+						},
+					},
+				},
+			},
+			assert: func(t *testing.T, enabled bool, err error) {
+				require.NoError(t, err)
+				require.True(t, enabled)
 			},
 		},
 		{
@@ -108,6 +201,7 @@ func TestIsAutoPromotionEnabled(t *testing.T) {
 			c := fake.NewClientBuilder().
 				WithScheme(scheme).
 				WithRuntimeObjects(testCase.objects...).
+				WithInterceptorFuncs(testCase.interceptor).
 				Build()
 			enabled, err := IsAutoPromotionEnabled(t.Context(), c, stageMeta)
 			testCase.assert(t, enabled, err)

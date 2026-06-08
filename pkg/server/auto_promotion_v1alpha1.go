@@ -29,8 +29,8 @@ type autoPromotionCandidatesResponse struct {
 // autoPromotionCandidate identifies the Freight auto-promotion would currently
 // choose for one origin.
 type autoPromotionCandidate struct {
-	Origin  kargoapi.FreightOrigin    `json:"origin"`
-	Freight kargoapi.FreightReference `json:"freight"`
+	Origin      kargoapi.FreightOrigin `json:"origin"`
+	FreightName string                 `json:"freightName"`
 } // @name AutoPromotionCandidate
 
 // resumeStageAutoPromotionRequest identifies the held origin to resume.
@@ -82,11 +82,8 @@ func (s *server) getStageAutoPromotionCandidates(c *gin.Context) {
 	}
 	for _, freight := range candidates {
 		resp.Candidates = append(resp.Candidates, autoPromotionCandidate{
-			Origin: freight.Origin,
-			Freight: kargoapi.FreightReference{
-				Name:   freight.Name,
-				Origin: freight.Origin,
-			},
+			Origin:      freight.Origin,
+			FreightName: freight.Name,
 		})
 	}
 	slices.SortFunc(resp.Candidates, func(lhs, rhs autoPromotionCandidate) int {

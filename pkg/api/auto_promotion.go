@@ -122,8 +122,8 @@ func AutoPromotionHoldIdentityMatches(
 	hold kargoapi.AutoPromotionHold,
 	expected kargoapi.AutoPromotionHold,
 ) bool {
-	return hold.Freight.Name == expected.Freight.Name &&
-		hold.Freight.Origin.Equals(&expected.Freight.Origin) &&
+	return hold.FreightName == expected.FreightName &&
+		hold.Origin.Equals(&expected.Origin) &&
 		hold.PromotionName == expected.PromotionName &&
 		hold.PromotionUID == expected.PromotionUID &&
 		AutoPromotionHoldTimesEqual(hold.CreatedAt, expected.CreatedAt)

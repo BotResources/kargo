@@ -112,7 +112,7 @@ export const ResumeAutoPromotionDrawer = ({
       return 'Checking the current auto-promotion candidate.';
     }
 
-    const candidateName = getAutoPromotionCandidate(candidates, entry.origin)?.freight?.name;
+    const candidateName = getAutoPromotionCandidate(candidates, entry.origin)?.freightName;
     if (!candidateName) {
       return 'No current auto-promotion candidate exists for this origin.';
     }
@@ -159,7 +159,7 @@ export const ResumeAutoPromotionDrawer = ({
         {entry.hold.state === autoPromotionHoldStatePending
           ? 'Rollback Promotion is still settling'
           : 'Paused after rollback'}{' '}
-        to {renderFreightLink(entry.hold.freight?.name)}.
+        to {renderFreightLink(entry.hold.freightName)}.
       </Typography.Text>
 
       {entry.hold.reason && (

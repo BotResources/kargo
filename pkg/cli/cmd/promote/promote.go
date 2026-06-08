@@ -348,7 +348,6 @@ func (o *promotionOptions) expectedAutoPromotionCandidate(
 	}
 	for _, candidate := range candidatesRes.Payload.Candidates {
 		if candidate == nil ||
-			candidate.Freight == nil ||
 			candidate.Origin == nil ||
 			candidate.Origin.Kind == nil ||
 			candidate.Origin.Name == nil {
@@ -356,7 +355,7 @@ func (o *promotionOptions) expectedAutoPromotionCandidate(
 		}
 		if *candidate.Origin.Kind == *freightRes.Payload.Origin.Kind &&
 			*candidate.Origin.Name == *freightRes.Payload.Origin.Name {
-			return candidate.Freight.Name, nil
+			return candidate.FreightName, nil
 		}
 	}
 	return "", nil

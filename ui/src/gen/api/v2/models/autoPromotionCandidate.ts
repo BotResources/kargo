@@ -5,10 +5,9 @@
  * REST API for Kargo
  * OpenAPI spec version: v1alpha1
  */
-import type { FreightReference } from './freightReference';
 import type { FreightOrigin } from './freightOrigin';
 
 export interface AutoPromotionCandidate {
-  freight?: FreightReference;
+  freightName?: string;
   origin?: FreightOrigin;
 }

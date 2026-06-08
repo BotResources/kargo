@@ -187,10 +187,15 @@ message ArtifactoryWebhookReceiverConfig {
 // origin. Other origins continue to auto-promote normally. The origin is
 // identified by the enclosing map key.
 message AutoPromotionHold {
-  // Freight is a reference to the Freight that was selected by the operator
+  // FreightName is the name of the Freight that was selected by the operator
   // when the hold was created.
   // +kubebuilder:validation:Required
-  optional FreightReference freight = 1;
+  optional string freightName = 1;
+
+  // Origin describes the kind of Freight pinned by this hold in terms of its
+  // origin. It matches the enclosing map key.
+  // +kubebuilder:validation:Required
+  optional FreightOrigin origin = 8;
 
   // State is the current lifecycle state of the hold.
   // +kubebuilder:validation:Required
@@ -209,6 +214,7 @@ message AutoPromotionHold {
 
   // Reason is a free-form human-readable explanation of why the hold was
   // created.
+  // +kubebuilder:validation:MaxLength=1024
   optional string reason = 6;
 
   // CreatedAt is the time at which the hold was created.

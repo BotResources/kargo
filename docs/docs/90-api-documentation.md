@@ -1625,12 +1625,13 @@ RawFormat specifies the format for raw resource representation.
  AutoPromotionHold pins a single FreightOrigin on a Stage, pausing auto-promotion for that origin after a user-directed promotion intentionally selects Freight other than the current auto-promotion candidate for the same origin. Other origins continue to auto-promote normally. The origin is identified by the enclosing map key.
 | Field | Type | Description |
 | ----- | ---- | ----------- |
-| freight | [FreightReference](#github-com-akuity-kargo-api-v1alpha1-FreightReference) |  Freight is a reference to the Freight that was selected by the operator when the hold was created.  |
+| freightName | string |  FreightName is the name of the Freight that was selected by the operator when the hold was created.  |
+| origin | [FreightOrigin](#github-com-akuity-kargo-api-v1alpha1-FreightOrigin) |  Origin describes the kind of Freight pinned by this hold in terms of its origin. It matches the enclosing map key.  |
 | state | string |  State is the current lifecycle state of the hold.  |
 | promotionName | string |  PromotionName is the name of the rollback Promotion associated with this hold, when applicable. |
 | promotionUID | string |  PromotionUID is the UID of the rollback Promotion. Used to prevent an older failed rollback from clearing a newer hold. |
 | actor | string |  Actor is an identifier for the user who caused the hold to be created. |
-| reason | string |  Reason is a free-form human-readable explanation of why the hold was created. |
+| reason | string |  Reason is a free-form human-readable explanation of why the hold was created.  |
 | createdAt | k8s.io.apimachinery.pkg.apis.meta.v1.Time |  CreatedAt is the time at which the hold was created. |
 
 

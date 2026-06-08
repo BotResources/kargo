@@ -222,8 +222,8 @@ func candidateWithOrigin(
 ) *models.AutoPromotionCandidate {
 	kind := "Warehouse"
 	return &models.AutoPromotionCandidate{
-		Freight: &models.FreightReference{Name: freightName},
-		Origin:  &models.FreightOrigin{Kind: &kind, Name: &name},
+		FreightName: freightName,
+		Origin:      &models.FreightOrigin{Kind: &kind, Name: &name},
 	}
 }
 

@@ -465,10 +465,8 @@ func (s *server) createPendingAutoPromotionHold(
 ) (kargoapi.AutoPromotionHold, bool, error) {
 	now := metav1.Now()
 	hold := kargoapi.AutoPromotionHold{
-		Freight: kargoapi.FreightReference{
-			Name:   freight.Name,
-			Origin: freight.Origin,
-		},
+		FreightName:   freight.Name,
+		Origin:        freight.Origin,
 		State:         kargoapi.AutoPromotionHoldStatePending,
 		PromotionName: promotion.Name,
 		Actor:         autoPromotionHoldActor(ctx),
@@ -578,8 +576,8 @@ func autoPromotionHoldMatchesPendingCreate(
 ) bool {
 	return hold.State == kargoapi.AutoPromotionHoldStatePending &&
 		hold.PromotionName == expected.PromotionName &&
-		hold.Freight.Name == expected.Freight.Name &&
-		hold.Freight.Origin.Equals(&expected.Freight.Origin)
+		hold.FreightName == expected.FreightName &&
+		hold.Origin.Equals(&expected.Origin)
 }
 
 func annotateRollbackPromotion(promotion *kargoapi.Promotion) {

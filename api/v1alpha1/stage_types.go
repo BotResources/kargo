@@ -472,10 +472,14 @@ const (
 // origin. Other origins continue to auto-promote normally. The origin is
 // identified by the enclosing map key.
 type AutoPromotionHold struct {
-	// Freight is a reference to the Freight that was selected by the operator
+	// FreightName is the name of the Freight that was selected by the operator
 	// when the hold was created.
 	// +kubebuilder:validation:Required
-	Freight FreightReference `json:"freight" protobuf:"bytes,1,opt,name=freight"`
+	FreightName string `json:"freightName" protobuf:"bytes,1,opt,name=freightName"`
+	// Origin describes the kind of Freight pinned by this hold in terms of its
+	// origin. It matches the enclosing map key.
+	// +kubebuilder:validation:Required
+	Origin FreightOrigin `json:"origin" protobuf:"bytes,8,opt,name=origin"`
 	// State is the current lifecycle state of the hold.
 	// +kubebuilder:validation:Required
 	State AutoPromotionHoldState `json:"state" protobuf:"bytes,2,opt,name=state" swaggertype:"string"`

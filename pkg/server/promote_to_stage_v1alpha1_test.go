@@ -781,7 +781,7 @@ func TestPromoteToStageCreatesAutoPromotionHold(t *testing.T) {
 	require.Len(t, updatedStage.Status.AutoPromotionHolds, 1)
 	hold := updatedStage.Status.AutoPromotionHolds[origin.String()]
 	require.Equal(t, kargoapi.AutoPromotionHoldStatePending, hold.State)
-	require.Equal(t, olderFreight.Name, hold.Freight.Name)
+	require.Equal(t, olderFreight.Name, hold.FreightName)
 	require.Equal(t, res.Msg.GetPromotion().Name, hold.PromotionName)
 }
 
@@ -1145,7 +1145,7 @@ func Test_server_promoteToStage(t *testing.T) {
 					require.Len(t, stage.Status.AutoPromotionHolds, 1)
 					hold, ok := stage.Status.AutoPromotionHolds[testFreight.Origin.String()]
 					require.True(t, ok)
-					require.Equal(t, testFreight.Name, hold.Freight.Name)
+					require.Equal(t, testFreight.Name, hold.FreightName)
 					require.Equal(t, kargoapi.AutoPromotionHoldStatePending, hold.State)
 					require.Equal(t, promos.Items[0].Name, hold.PromotionName)
 					require.Equal(t, "rollback to last good version", hold.Reason)
@@ -1160,10 +1160,8 @@ func Test_server_promoteToStage(t *testing.T) {
 						stage := testStage.DeepCopy()
 						stage.Status.AutoPromotionHolds = map[string]kargoapi.AutoPromotionHold{
 							testFreight.Origin.String(): {
-								Freight: kargoapi.FreightReference{
-									Name:   testFreight.Name,
-									Origin: testFreight.Origin,
-								},
+								FreightName:   testFreight.Name,
+								Origin:        testFreight.Origin,
 								State:         kargoapi.AutoPromotionHoldStateActive,
 								PromotionName: "previous-rollback",
 								PromotionUID:  "previous-uid",
@@ -1222,10 +1220,8 @@ func Test_server_promoteToStage(t *testing.T) {
 						stage := testStage.DeepCopy()
 						stage.Status.AutoPromotionHolds = map[string]kargoapi.AutoPromotionHold{
 							testFreight.Origin.String(): {
-								Freight: kargoapi.FreightReference{
-									Name:   testFreight.Name,
-									Origin: testFreight.Origin,
-								},
+								FreightName:   testFreight.Name,
+								Origin:        testFreight.Origin,
 								State:         kargoapi.AutoPromotionHoldStatePending,
 								PromotionName: "rollback-in-progress",
 								CreatedAt:     &metav1.Time{Time: now.Add(-time.Minute)},
@@ -1472,10 +1468,8 @@ func Test_server_promoteToStage(t *testing.T) {
 						stage.Status.AutoPromotionEnabled = false
 						stage.Status.AutoPromotionHolds = map[string]kargoapi.AutoPromotionHold{
 							testFreight.Origin.String(): {
-								Freight: kargoapi.FreightReference{
-									Name:   testFreight.Name,
-									Origin: testFreight.Origin,
-								},
+								FreightName:   testFreight.Name,
+								Origin:        testFreight.Origin,
 								State:         kargoapi.AutoPromotionHoldStateActive,
 								PromotionName: "rollback-promotion",
 								PromotionUID:  "rollback-uid",
@@ -1524,10 +1518,8 @@ func Test_server_promoteToStage(t *testing.T) {
 						stage := testStage.DeepCopy()
 						stage.Status.AutoPromotionHolds = map[string]kargoapi.AutoPromotionHold{
 							testFreight.Origin.String(): {
-								Freight: kargoapi.FreightReference{
-									Name:   testFreight.Name,
-									Origin: testFreight.Origin,
-								},
+								FreightName:   testFreight.Name,
+								Origin:        testFreight.Origin,
 								State:         kargoapi.AutoPromotionHoldStateActive,
 								PromotionName: "rollback-promotion",
 								PromotionUID:  "rollback-uid",
@@ -1592,10 +1584,8 @@ func Test_server_promoteToStage(t *testing.T) {
 						stage := testStage.DeepCopy()
 						stage.Status.AutoPromotionHolds = map[string]kargoapi.AutoPromotionHold{
 							testFreight.Origin.String(): {
-								Freight: kargoapi.FreightReference{
-									Name:   testFreight.Name,
-									Origin: testFreight.Origin,
-								},
+								FreightName:   testFreight.Name,
+								Origin:        testFreight.Origin,
 								State:         kargoapi.AutoPromotionHoldStatePending,
 								PromotionName: "rollback-promotion",
 								CreatedAt:     &metav1.Time{Time: now.Add(-time.Minute)},
@@ -1658,10 +1648,8 @@ func Test_server_promoteToStage(t *testing.T) {
 								if stageGetCount > 1 {
 									stage.Status.AutoPromotionHolds = map[string]kargoapi.AutoPromotionHold{
 										testFreight.Origin.String(): {
-											Freight: kargoapi.FreightReference{
-												Name:   testFreight.Name,
-												Origin: testFreight.Origin,
-											},
+											FreightName:   testFreight.Name,
+											Origin:        testFreight.Origin,
 											State:         kargoapi.AutoPromotionHoldStateActive,
 											PromotionName: "rollback-promotion",
 											PromotionUID:  "rollback-uid",
@@ -1712,10 +1700,8 @@ func Test_server_promoteToStage(t *testing.T) {
 							stage := testStage.DeepCopy()
 							stage.Status.AutoPromotionHolds = map[string]kargoapi.AutoPromotionHold{
 								testFreight.Origin.String(): {
-									Freight: kargoapi.FreightReference{
-										Name:   testFreight.Name,
-										Origin: testFreight.Origin,
-									},
+									FreightName:   testFreight.Name,
+									Origin:        testFreight.Origin,
 									State:         kargoapi.AutoPromotionHoldStateActive,
 									PromotionName: "rollback-promotion",
 									PromotionUID:  "rollback-uid",

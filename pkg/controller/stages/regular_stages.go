@@ -1018,8 +1018,8 @@ func pendingAutoPromotionHoldMatchesSnapshot(
 	hold kargoapi.AutoPromotionHold,
 	snapshot kargoapi.AutoPromotionHold,
 ) bool {
-	if hold.Freight.Name != snapshot.Freight.Name ||
-		!hold.Freight.Origin.Equals(&snapshot.Freight.Origin) ||
+	if hold.FreightName != snapshot.FreightName ||
+		!hold.Origin.Equals(&snapshot.Origin) ||
 		hold.PromotionName != snapshot.PromotionName ||
 		hold.State != snapshot.State ||
 		hold.Actor != snapshot.Actor ||
@@ -1167,7 +1167,7 @@ func (r *RegularStageReconciler) sendAutoPromotionHoldAbandonedEvent(
 		Data: map[string]any{
 			"origin":    origin,
 			"promotion": hold.PromotionName,
-			"freight":   hold.Freight.Name,
+			"freight":   hold.FreightName,
 		},
 	}
 	if err := r.eventSender.Send(ctx, evt); err != nil {
@@ -2124,8 +2124,8 @@ func (r *RegularStageReconciler) findExistingAnalysisRun(
 }
 
 // autoPromoteFreight automatically promotes the latest promotable (i.e.
-// verified) Freight for a Stage if auto-promotion is allowed (see
-// autoPromotionAllowed).
+// verified) Freight for a Stage if auto-promotion is enabled for the Stage
+// (see api.IsAutoPromotionEnabled).
 func (r *RegularStageReconciler) autoPromoteFreight(
 	ctx context.Context,
 	stage *kargoapi.Stage,
@@ -2141,9 +2141,15 @@ func (r *RegularStageReconciler) autoPromoteFreight(
 	}
 
 	// Confirm that auto-promotion is allowed for the Stage.
-	if autoPromotionAllowed, err := r.autoPromotionAllowed(ctx, stage.ObjectMeta); err != nil || !autoPromotionAllowed {
+	autoPromotionEnabled, err := api.IsAutoPromotionEnabled(ctx, r.client, stage.ObjectMeta)
+	if err != nil {
 		newStatus.AutoPromotionEnabled = false
 		return newStatus, err
+	}
+	logger.Debug("checked auto-promotion policy for Stage", "autoPromotionEnabled", autoPromotionEnabled)
+	if !autoPromotionEnabled {
+		newStatus.AutoPromotionEnabled = false
+		return newStatus, nil
 	}
 	newStatus.AutoPromotionEnabled = true
 
@@ -2391,21 +2397,6 @@ func autoPromotionTerminalAllowsRetry(status kargoapi.PromotionStatus) bool {
 	return status.Phase == kargoapi.PromotionPhaseSucceeded ||
 		(status.Phase == kargoapi.PromotionPhaseAborted &&
 			status.Message == api.AutoPromotionBlockedByHoldMessage)
-}
-
-// autoPromotionAllowed checks if auto-promotion is allowed for the given Stage.
-func (r *RegularStageReconciler) autoPromotionAllowed(
-	ctx context.Context,
-	stage metav1.ObjectMeta,
-) (bool, error) {
-	logger := logging.LoggerFromContext(ctx)
-	allowed, err := api.IsAutoPromotionEnabled(ctx, r.client, stage)
-	if err != nil {
-		return false, err
-	}
-
-	logger.Debug("checked auto-promotion policy for Stage", "autoPromotionEnabled", allowed)
-	return allowed, nil
 }
 
 // handleDelete handles the deletion of the given Stage. It clears the

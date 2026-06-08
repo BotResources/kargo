@@ -49,7 +49,7 @@ export const getAutoPromotionCandidate = (
 export const getAutoPromotionCandidateName = (
   candidates: AutoPromotionCandidate[] | undefined,
   freight: Pick<Freight | FreightReference, 'origin'> | undefined
-) => getAutoPromotionCandidate(candidates, freight?.origin)?.freight?.name;
+) => getAutoPromotionCandidate(candidates, freight?.origin)?.freightName;
 
 export const getAutoPromotionHold = (stage: Stage | undefined, origin?: OriginLike) => {
   const key = originKey(origin);
@@ -78,7 +78,7 @@ export const getAutoPromotionHoldEntries = (
     .map(([key, hold]) => ({
       key,
       hold,
-      origin: hold?.freight?.origin || originFromKey(key),
+      origin: hold?.origin || originFromKey(key),
       focused: Boolean(focusOriginKey && focusOriginKey === key)
     }))
     .sort((lhs, rhs) => {
