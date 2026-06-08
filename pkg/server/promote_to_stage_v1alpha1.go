@@ -11,7 +11,6 @@ import (
 	"connectrpc.com/connect"
 	"github.com/gin-gonic/gin"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -401,23 +400,44 @@ func (s *server) createStagePromotion(
 		return stagePromotionResult{}, err
 	}
 
-	createdHold := false
-	var createdPendingHold kargoapi.AutoPromotionHold
+	createPromotion := s.createPromotionFn
+	if createPromotion == nil {
+		createPromotion = s.client.Create
+	}
 
+	// Selecting Freight other than the current auto-promotion candidate is a
+	// rollback: record a pending hold and create the rollback Promotion together.
+	// Selecting the candidate instead lets the Stage controller clear any
+	// existing active hold once the Promotion succeeds. Stage status is written
+	// with the internal client because users cannot patch it directly, while the
+	// Promotion is created with the user's authorizing client.
 	switch {
 	case candidate != nil && candidate.Name != freight.Name:
-		if createdPendingHold, createdHold, err = s.createPendingAutoPromotionHold(
+		if err = api.CreatePendingAutoPromotionHold(
 			ctx,
+			s.client.InternalClient(),
 			key,
-			freight,
 			promotion,
-			opts,
+			*freight,
+			api.AutoPromotionHoldOptions{
+				Actor:           autoPromotionHoldActor(ctx),
+				Reason:          opts.Reason,
+				CreatePromotion: createPromotion,
+			},
 		); err != nil {
-			return stagePromotionResult{}, err
+			var exists *api.AutoPromotionHoldExistsError
+			if errors.As(err, &exists) {
+				return stagePromotionResult{}, newStagePromotionConflictError(
+					"auto-promotion is already %s for origin %q; wait for the "+
+						"current rollback to settle or resume auto-promotion before "+
+						"creating another rollback",
+					strings.ToLower(string(exists.State)),
+					exists.Origin.String(),
+				)
+			}
+			return stagePromotionResult{}, createPromotionError(err)
 		}
-		if createdHold {
-			annotateRollbackPromotion(promotion)
-		}
+		return stagePromotionResult{Promotion: promotion, CreatedHold: true}, nil
 	case candidate != nil:
 		if err = s.annotateAutoPromotionHoldClearIfCurrent(
 			ctx,
@@ -431,79 +451,10 @@ func (s *server) createStagePromotion(
 		}
 	}
 
-	createPromotionFn := s.createPromotionFn
-	if createPromotionFn == nil {
-		createPromotionFn = s.client.Create
-	}
-	if createErr := createPromotionFn(ctx, promotion); createErr != nil {
-		if createdHold && !promotionCreateMayHavePersisted(createErr) {
-			if _, cleanupErr := s.patchStageAutoPromotionHolds(ctx, key, func(status *kargoapi.StageStatus) bool {
-				return removeAutoPromotionHolds(status, func(origin string, hold kargoapi.AutoPromotionHold) bool {
-					return origin == freight.Origin.String() &&
-						autoPromotionHoldMatchesPendingCreate(hold, createdPendingHold)
-				})
-			}); cleanupErr != nil {
-				return stagePromotionResult{}, apierrors.NewInternalError(
-					fmt.Errorf("create promotion: %w; cleanup pending auto-promotion hold: %w", createErr, cleanupErr),
-				)
-			}
-		}
+	if createErr := createPromotion(ctx, promotion); createErr != nil {
 		return stagePromotionResult{}, createPromotionError(createErr)
 	}
-	return stagePromotionResult{
-		Promotion:   promotion,
-		CreatedHold: createdHold,
-	}, nil
-}
-
-func (s *server) createPendingAutoPromotionHold(
-	ctx context.Context,
-	key client.ObjectKey,
-	freight *kargoapi.Freight,
-	promotion *kargoapi.Promotion,
-	opts stagePromotionOptions,
-) (kargoapi.AutoPromotionHold, bool, error) {
-	now := metav1.Now()
-	hold := kargoapi.AutoPromotionHold{
-		FreightName:   freight.Name,
-		Origin:        freight.Origin,
-		State:         kargoapi.AutoPromotionHoldStatePending,
-		PromotionName: promotion.Name,
-		Actor:         autoPromotionHoldActor(ctx),
-		Reason:        opts.Reason,
-		CreatedAt:     &now,
-	}
-
-	// createStagePromotion already verified (once, up front) that the selected
-	// Freight differs from the current auto-promotion candidate, so this is a
-	// rollback. We deliberately do NOT re-derive the candidate inside the retry
-	// loop: if it shifted in the meantime it only shifted to a still-newer
-	// Freight, which the pending hold we are about to write blocks just the same.
-	// The single precondition that must hold against live state is that we never
-	// overwrite an existing hold for this origin.
-	var existingHold *kargoapi.AutoPromotionHold
-	createdHold, err := s.patchStageAutoPromotionHoldsWithStage(ctx, key, func(liveStage *kargoapi.Stage) bool {
-		existingHold = nil
-		if statusHold, ok := liveStage.Status.GetAutoPromotionHold(freight.Origin); ok {
-			existing := statusHold
-			existingHold = &existing
-			return false
-		}
-		return upsertAutoPromotionHold(&liveStage.Status, freight.Origin, hold)
-	})
-	if err != nil {
-		return kargoapi.AutoPromotionHold{}, false, fmt.Errorf("create auto-promotion hold: %w", err)
-	}
-	if existingHold != nil {
-		return kargoapi.AutoPromotionHold{}, false, newStagePromotionConflictError(
-			"auto-promotion is already %s for origin %q; wait for the "+
-				"current rollback to settle or resume auto-promotion before "+
-				"creating another rollback",
-			strings.ToLower(string(existingHold.State)),
-			freight.Origin.String(),
-		)
-	}
-	return hold, createdHold, nil
+	return stagePromotionResult{Promotion: promotion}, nil
 }
 
 func (s *server) annotateAutoPromotionHoldClearIfCurrent(
@@ -567,26 +518,6 @@ func (s *server) annotateAutoPromotionHoldClearIfCurrent(
 	return nil
 }
 
-// autoPromotionHoldMatchesPendingCreate checks that a pending hold is exactly
-// the hold this request created using fields that cannot change through API
-// serialization. The Promotion name is unique for this request.
-func autoPromotionHoldMatchesPendingCreate(
-	hold kargoapi.AutoPromotionHold,
-	expected kargoapi.AutoPromotionHold,
-) bool {
-	return hold.State == kargoapi.AutoPromotionHoldStatePending &&
-		hold.PromotionName == expected.PromotionName &&
-		hold.FreightName == expected.FreightName &&
-		hold.Origin.Equals(&expected.Origin)
-}
-
-func annotateRollbackPromotion(promotion *kargoapi.Promotion) {
-	if promotion.Annotations == nil {
-		promotion.Annotations = make(map[string]string, 1)
-	}
-	promotion.Annotations[kargoapi.AnnotationKeyRollback] = kargoapi.AnnotationValueTrue
-}
-
 // expectedAutoCandidateConflict returns a conflict when a request's
 // stale-candidate precondition no longer matches the current candidate.
 func expectedAutoCandidateConflict(
@@ -641,31 +572,6 @@ func annotateClearAutoPromotionHold(
 		promotion.Annotations[kargoapi.AnnotationKeyClearAutoPromotionHoldCreatedAt] =
 			hold.CreatedAt.Format(time.RFC3339Nano)
 	}
-}
-
-// promotionCreateMayHavePersisted reports whether a create error may have been
-// returned after the API server persisted the Promotion. This guards a real
-// correctness boundary: if the Promotion actually persisted but we deleted the
-// pending hold, nothing would block auto-promotion from stomping the rollback.
-// So when in doubt we KEEP the hold and let the Stage controller reconcile the
-// partial state (it abandons a pending hold whose Promotion never appears after
-// a grace period).
-func promotionCreateMayHavePersisted(err error) bool {
-	if apierrors.IsAlreadyExists(err) {
-		return true
-	}
-	if apierrors.IsTimeout(err) ||
-		apierrors.IsServerTimeout(err) ||
-		apierrors.IsServiceUnavailable(err) ||
-		apierrors.IsInternalError(err) ||
-		apierrors.IsUnexpectedServerError(err) {
-		return true
-	}
-	// Anything that is not a structured Kubernetes API error (e.g. a transport
-	// failure) is ambiguous about whether the write landed; bias toward keeping
-	// the hold.
-	var statusErr *apierrors.StatusError
-	return !errors.As(err, &statusErr)
 }
 
 func createPromotionError(err error) error {

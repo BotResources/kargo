@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"reflect"
 	"slices"
 	"strings"
 
@@ -313,37 +312,24 @@ func (s *server) getAutoPromotionAvailableFreightForStage(
 	return api.ListFreightAvailableToStage(ctx, s.client.InternalClient(), stage)
 }
 
+// patchStageAutoPromotionHolds mutates Stage status with optimistic locking,
+// re-running mutate against each fresh snapshot because the caller's
+// preconditions must be re-checked after every conflict retry. The internal
+// client performs the write because Stage status is controller/API-owned, not
+// directly user-writable; callers authorize the request beforehand.
 func (s *server) patchStageAutoPromotionHolds(
 	ctx context.Context,
 	key client.ObjectKey,
 	mutate func(*kargoapi.StageStatus) bool,
 ) (bool, error) {
-	return s.patchStageAutoPromotionHoldsWithStage(ctx, key, func(stage *kargoapi.Stage) bool {
-		return mutate(&stage.Status)
-	})
-}
-
-// patchStageAutoPromotionHoldsWithStage mutates Stage status with optimistic
-// locking while allowing the caller to inspect the live Stage snapshot used for
-// the write. The mutation is a function because the caller's preconditions
-// need to be checked again on every retry after the latest Stage has been read.
-func (s *server) patchStageAutoPromotionHoldsWithStage(
-	ctx context.Context,
-	key client.ObjectKey,
-	mutate func(*kargoapi.Stage) bool,
-) (bool, error) {
 	var changed bool
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		stage := &kargoapi.Stage{}
-		// The caller is authorized before this helper is used. The internal
-		// client performs the mechanical status write because Stage status is
-		// controller/API-owned, not directly user-writable.
 		if err := s.client.InternalClient().Get(ctx, key, stage); err != nil {
 			return err
 		}
 		original := stage.DeepCopy()
-		changed = mutate(stage)
-		if !changed {
+		if changed = mutate(&stage.Status); !changed {
 			return nil
 		}
 		return s.client.InternalClient().Status().Patch(
@@ -353,22 +339,6 @@ func (s *server) patchStageAutoPromotionHoldsWithStage(
 		)
 	})
 	return changed, err
-}
-
-func upsertAutoPromotionHold(
-	status *kargoapi.StageStatus,
-	origin kargoapi.FreightOrigin,
-	hold kargoapi.AutoPromotionHold,
-) bool {
-	if status.AutoPromotionHolds == nil {
-		status.AutoPromotionHolds = make(map[string]kargoapi.AutoPromotionHold, 1)
-	}
-	key := origin.String()
-	if existing, ok := status.AutoPromotionHolds[key]; ok && reflect.DeepEqual(existing, hold) {
-		return false
-	}
-	status.AutoPromotionHolds[key] = hold
-	return true
 }
 
 func removeAutoPromotionHolds(
