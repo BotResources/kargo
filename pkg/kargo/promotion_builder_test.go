@@ -27,6 +27,7 @@ func TestPromotionBuilder_Build(t *testing.T) {
 		name       string
 		stage      kargoapi.Stage
 		freight    string
+		source     kargoapi.PromotionSource
 		userInfo   user.Info
 		assertions func(*testing.T, *kargoapi.Promotion, error)
 	}{
@@ -170,6 +171,34 @@ func TestPromotionBuilder_Build(t *testing.T) {
 				assert.Equal(t, kargoapi.EventActorAdmin, promotion.Annotations[kargoapi.AnnotationKeyCreateActor])
 			},
 		},
+		{
+			name: "successful build with auto source",
+			stage: kargoapi.Stage{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-stage",
+					Namespace: "test-project",
+				},
+				Spec: kargoapi.StageSpec{
+					PromotionTemplate: &kargoapi.PromotionTemplate{
+						Spec: kargoapi.PromotionTemplateSpec{
+							Steps: []kargoapi.PromotionStep{
+								{
+									As:   "step1",
+									Uses: "fake-step",
+								},
+							},
+						},
+					},
+				},
+			},
+			freight: "abc123",
+			source:  kargoapi.PromotionSourceAuto,
+			assertions: func(t *testing.T, promotion *kargoapi.Promotion, err error) {
+				require.NoError(t, err)
+				require.NotNil(t, promotion)
+				assert.Equal(t, kargoapi.PromotionSourceAuto, promotion.Spec.Source)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -181,6 +210,9 @@ func TestPromotionBuilder_Build(t *testing.T) {
 				Build()
 
 			b := NewPromotionBuilder(c)
+			if tt.source != "" {
+				b = b.WithSource(tt.source)
+			}
 			promotion, err := b.Build(ctx, tt.stage, tt.freight)
 			tt.assertions(t, promotion, err)
 		})

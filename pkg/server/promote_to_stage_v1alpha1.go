@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/gin-gonic/gin"
@@ -120,7 +119,7 @@ func (s *server) PromoteToStage(
 		)
 	}
 
-	result, err := s.createStagePromotion(
+	promotion, err := s.createStagePromotion(
 		ctx,
 		stage,
 		freight,
@@ -129,22 +128,7 @@ func (s *server) PromoteToStage(
 	if err != nil {
 		return nil, stagePromotionConnectError(err)
 	}
-	promotion := result.Promotion
 	s.recordPromotionCreatedEvent(ctx, promotion, freight)
-	if result.CreatedHold {
-		if _, err = api.RefreshStage(
-			ctx,
-			s.client.InternalClient(),
-			client.ObjectKey{Namespace: project, Name: stageName},
-		); err != nil {
-			logging.LoggerFromContext(ctx).Error(
-				err,
-				"error refreshing Stage after creating rollback Promotion",
-				"stage", stageName,
-				"promotion", promotion.Name,
-			)
-		}
-	}
 	return connect.NewResponse(&svcv1alpha1.PromoteToStageResponse{
 		Promotion: promotion,
 	}), nil
@@ -211,7 +195,6 @@ func (s *server) promoteToStage(c *gin.Context) {
 	ctx := c.Request.Context()
 	project := c.Param("project")
 	stageName := c.Param("stage")
-	key := client.ObjectKey{Namespace: project, Name: stageName}
 
 	var req promoteToStageRequest
 	if !bindJSONOrError(c, &req) {
@@ -227,9 +210,12 @@ func (s *server) promoteToStage(c *gin.Context) {
 		return
 	}
 	req.Reason = strings.TrimSpace(req.Reason)
-	if len(req.Reason) > 1024 {
+	if len(req.Reason) > kargoapi.AutoPromotionHoldReasonMaxLength {
 		_ = c.Error(libhttp.ErrorStr(
-			"reason cannot be longer than 1024 characters",
+			fmt.Sprintf(
+				"reason cannot be longer than %d characters",
+				kargoapi.AutoPromotionHoldReasonMaxLength,
+			),
 			http.StatusBadRequest,
 		))
 		return
@@ -301,7 +287,7 @@ func (s *server) promoteToStage(c *gin.Context) {
 		return
 	}
 
-	result, err := s.createStagePromotion(
+	promotion, err := s.createStagePromotion(
 		ctx,
 		stage,
 		freight,
@@ -314,24 +300,7 @@ func (s *server) promoteToStage(c *gin.Context) {
 		_ = c.Error(stagePromotionRESTError(err))
 		return
 	}
-	promotion := result.Promotion
-
-	if s.sender != nil {
-		s.recordPromotionCreatedEvent(ctx, promotion, freight)
-	}
-	if result.CreatedHold {
-		// The caller was authorized for the custom "promote" verb above.
-		// The internal client performs the mechanical refresh annotation
-		// write because users are not generally allowed to patch Stages.
-		if _, err = api.RefreshStage(ctx, s.client.InternalClient(), key); err != nil {
-			logging.LoggerFromContext(ctx).Error(
-				err,
-				"error refreshing Stage after creating rollback Promotion",
-				"stage", stageName,
-				"promotion", promotion.Name,
-			)
-		}
-	}
+	s.recordPromotionCreatedEvent(ctx, promotion, freight)
 
 	c.JSON(http.StatusCreated, promotion)
 }
@@ -341,13 +310,6 @@ func (s *server) promoteToStage(c *gin.Context) {
 type stagePromotionOptions struct {
 	ExpectedAutoCandidate string
 	Reason                string
-}
-
-// stagePromotionResult names the Promotion and side effect produced by
-// createStagePromotion.
-type stagePromotionResult struct {
-	Promotion   *kargoapi.Promotion
-	CreatedHold bool
 }
 
 // stagePromotionConflictError reports user-retryable conflicts detected before
@@ -368,17 +330,17 @@ func newStagePromotionConflictError(format string, args ...any) error {
 // auto-promotion hold side effects implied by the selected Freight. Selecting
 // Freight other than the current auto-promotion candidate records a pending
 // hold before the Promotion is created. Selecting the current candidate records
-// annotations that let the Stage controller clear an existing active hold after
-// the Promotion succeeds.
+// an annotation that lets the Stage controller clear an existing active hold
+// after the Promotion succeeds.
 func (s *server) createStagePromotion(
 	ctx context.Context,
 	stage *kargoapi.Stage,
 	freight *kargoapi.Freight,
 	opts stagePromotionOptions,
-) (stagePromotionResult, error) {
+) (*kargoapi.Promotion, error) {
 	promotion, err := kargo.NewPromotionBuilder(s.client).Build(ctx, *stage, freight.Name)
 	if err != nil {
-		return stagePromotionResult{}, fmt.Errorf("build promotion: %w", err)
+		return nil, fmt.Errorf("build promotion: %w", err)
 	}
 
 	key := client.ObjectKey{Namespace: stage.Namespace, Name: stage.Name}
@@ -389,20 +351,15 @@ func (s *server) createStagePromotion(
 		"",
 		client.ObjectKeyFromObject(promotion),
 	); err != nil {
-		return stagePromotionResult{}, err
+		return nil, err
 	}
 
 	candidate, err := s.getAutoPromotionCandidate(ctx, stage, freight.Origin)
 	if err != nil {
-		return stagePromotionResult{}, fmt.Errorf("get auto-promotion candidate: %w", err)
+		return nil, fmt.Errorf("get auto-promotion candidate: %w", err)
 	}
-	if err = expectedAutoCandidateConflict(opts.ExpectedAutoCandidate, candidate); err != nil {
-		return stagePromotionResult{}, err
-	}
-
-	createPromotion := s.createPromotionFn
-	if createPromotion == nil {
-		createPromotion = s.client.Create
+	if err = checkExpectedAutoCandidate(opts.ExpectedAutoCandidate, candidate); err != nil {
+		return nil, err
 	}
 
 	// Selecting Freight other than the current auto-promotion candidate is a
@@ -422,12 +379,12 @@ func (s *server) createStagePromotion(
 			api.AutoPromotionHoldOptions{
 				Actor:           autoPromotionHoldActor(ctx),
 				Reason:          opts.Reason,
-				CreatePromotion: createPromotion,
+				CreatePromotion: s.createPromotionFn,
 			},
 		); err != nil {
 			var exists *api.AutoPromotionHoldExistsError
 			if errors.As(err, &exists) {
-				return stagePromotionResult{}, newStagePromotionConflictError(
+				return nil, newStagePromotionConflictError(
 					"auto-promotion is already %s for origin %q; wait for the "+
 						"current rollback to settle or resume auto-promotion before "+
 						"creating another rollback",
@@ -435,42 +392,56 @@ func (s *server) createStagePromotion(
 					exists.Origin.String(),
 				)
 			}
-			return stagePromotionResult{}, createPromotionError(err)
+			return nil, statusOrInternalError(err)
 		}
-		return stagePromotionResult{Promotion: promotion, CreatedHold: true}, nil
+		// The caller was authorized for the custom "promote" verb by the
+		// endpoint handler. The internal client performs the mechanical refresh
+		// annotation write because users are not generally allowed to patch
+		// Stages. A refresh failure never fails the request; the rollback
+		// Promotion and its hold are already in place.
+		if _, err = api.RefreshStage(ctx, s.client.InternalClient(), key); err != nil {
+			logging.LoggerFromContext(ctx).Error(
+				err,
+				"error refreshing Stage after creating rollback Promotion",
+				"stage", stage.Name,
+				"promotion", promotion.Name,
+			)
+		}
+		return promotion, nil
 	case candidate != nil:
 		if err = s.annotateAutoPromotionHoldClearIfCurrent(
 			ctx,
 			key,
-			stage,
 			freight,
 			promotion,
 			opts,
 		); err != nil {
-			return stagePromotionResult{}, err
+			return nil, err
 		}
 	}
 
-	if createErr := createPromotion(ctx, promotion); createErr != nil {
-		return stagePromotionResult{}, createPromotionError(createErr)
+	if err = s.createPromotionFn(ctx, promotion); err != nil {
+		return nil, createPromotionError(err)
 	}
-	return stagePromotionResult{Promotion: promotion}, nil
+	return promotion, nil
 }
 
+// annotateAutoPromotionHoldClearIfCurrent re-reads the Stage through the
+// internal client -- the cached Stage that nominated the selected Freight as
+// the current candidate may be stale -- and re-checks the caller's candidate
+// preconditions against that live snapshot. When the live snapshot carries an
+// active hold for the Freight's origin, promotion snapshots its exact identity
+// so the Stage controller clears that hold -- and no other -- if the Promotion
+// succeeds. A pending live hold is a conflict; no live hold means there is
+// nothing to clear.
 func (s *server) annotateAutoPromotionHoldClearIfCurrent(
 	ctx context.Context,
 	key client.ObjectKey,
-	stage *kargoapi.Stage,
 	freight *kargoapi.Freight,
 	promotion *kargoapi.Promotion,
 	opts stagePromotionOptions,
 ) error {
-	hold, held := stage.Status.GetAutoPromotionHold(freight.Origin)
-
 	liveStage := &kargoapi.Stage{}
-	// The cached Stage told us the selected Freight was the current candidate.
-	// Re-read through the internal client before annotating a clear, because
-	// the candidate or hold may have changed since the request started.
 	if err := s.client.InternalClient().Get(ctx, key, liveStage); err != nil {
 		return fmt.Errorf("get live Stage before clearing auto-promotion hold: %w", err)
 	}
@@ -478,7 +449,7 @@ func (s *server) annotateAutoPromotionHoldClearIfCurrent(
 	if err != nil {
 		return fmt.Errorf("get live auto-promotion candidate: %w", err)
 	}
-	if err = expectedAutoCandidateConflict(opts.ExpectedAutoCandidate, liveCandidate); err != nil {
+	if err = checkExpectedAutoCandidate(opts.ExpectedAutoCandidate, liveCandidate); err != nil {
 		return err
 	}
 	if liveCandidate != nil && liveCandidate.Name != freight.Name {
@@ -489,38 +460,23 @@ func (s *server) annotateAutoPromotionHoldClearIfCurrent(
 	}
 
 	liveHold, liveHeld := liveStage.Status.GetAutoPromotionHold(freight.Origin)
-	if liveHeld && liveHold.State == kargoapi.AutoPromotionHoldStatePending {
+	if !liveHeld {
+		return nil
+	}
+	if liveHold.State == kargoapi.AutoPromotionHoldStatePending {
 		return newStagePromotionConflictError(
 			"auto-promotion is pending for origin %q; wait for the "+
 				"current rollback to settle before promoting the current candidate",
 			freight.Origin.String(),
 		)
 	}
-	if liveHeld {
-		if !held ||
-			liveHold.State != kargoapi.AutoPromotionHoldStateActive ||
-			hold.State != kargoapi.AutoPromotionHoldStateActive ||
-			!api.AutoPromotionHoldIdentityMatches(liveHold, hold) {
-			return newStagePromotionConflictError(
-				"auto-promotion hold for origin %q changed; reload and try again",
-				freight.Origin.String(),
-			)
-		}
-		annotateClearAutoPromotionHold(promotion, freight.Origin, liveHold)
-		return nil
-	}
-	if held {
-		return newStagePromotionConflictError(
-			"auto-promotion hold for origin %q changed; reload and try again",
-			freight.Origin.String(),
-		)
-	}
+	api.SetClearAutoPromotionHoldAnnotation(promotion, liveHold)
 	return nil
 }
 
-// expectedAutoCandidateConflict returns a conflict when a request's
+// checkExpectedAutoCandidate returns a conflict when a request's
 // stale-candidate precondition no longer matches the current candidate.
-func expectedAutoCandidateConflict(
+func checkExpectedAutoCandidate(
 	expected string,
 	candidate *kargoapi.Freight,
 ) error {
@@ -557,23 +513,6 @@ func stagePromotionConnectError(err error) error {
 	return err
 }
 
-func annotateClearAutoPromotionHold(
-	promotion *kargoapi.Promotion,
-	origin kargoapi.FreightOrigin,
-	hold kargoapi.AutoPromotionHold,
-) {
-	if promotion.Annotations == nil {
-		promotion.Annotations = make(map[string]string, 4)
-	}
-	promotion.Annotations[kargoapi.AnnotationKeyClearAutoPromotionHold] = origin.String()
-	promotion.Annotations[kargoapi.AnnotationKeyClearAutoPromotionHoldPromotion] = hold.PromotionName
-	promotion.Annotations[kargoapi.AnnotationKeyClearAutoPromotionHoldPromotionUID] = hold.PromotionUID
-	if hold.CreatedAt != nil {
-		promotion.Annotations[kargoapi.AnnotationKeyClearAutoPromotionHoldCreatedAt] =
-			hold.CreatedAt.Format(time.RFC3339Nano)
-	}
-}
-
 func createPromotionError(err error) error {
 	var statusErr *apierrors.StatusError
 	if errors.As(err, &statusErr) {
@@ -582,4 +521,16 @@ func createPromotionError(err error) error {
 		return &apierrors.StatusError{ErrStatus: status}
 	}
 	return apierrors.NewInternalError(fmt.Errorf("create promotion: %w", err))
+}
+
+// statusOrInternalError returns err unchanged when it already carries a
+// Kubernetes status (and thus an HTTP code), and wraps anything else as an
+// internal error. Unlike createPromotionError it adds no prefix; it is for
+// errors whose messages are already self-describing.
+func statusOrInternalError(err error) error {
+	var statusErr *apierrors.StatusError
+	if errors.As(err, &statusErr) {
+		return err
+	}
+	return apierrors.NewInternalError(err)
 }

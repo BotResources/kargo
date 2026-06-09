@@ -213,7 +213,8 @@ message AutoPromotionHold {
   optional string actor = 5;
 
   // Reason is a free-form human-readable explanation of why the hold was
-  // created.
+  // created. The MaxLength marker below must match
+  // AutoPromotionHoldReasonMaxLength.
   // +kubebuilder:validation:MaxLength=1024
   optional string reason = 6;
 
@@ -1572,7 +1573,9 @@ message PromotionSpec {
 
   // Source describes the system path that created this Promotion. The value is
   // immutable and is used by controllers to distinguish normal auto-promotion
-  // from user-directed promotion requests.
+  // from user-directed promotion requests. An empty value, possible only on
+  // Promotions created before this field existed, is treated the same as
+  // NonAuto.
   optional string source = 5;
 
   // Vars is a list of variables that can be referenced by expressions in

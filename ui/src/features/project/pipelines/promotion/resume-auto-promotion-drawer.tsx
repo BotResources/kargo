@@ -1,15 +1,12 @@
-import { faHourglassHalf, faPause, faPlay } from '@fortawesome/free-solid-svg-icons';
+import { faPlay } from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { Alert, Button, Drawer, Flex, Radio, Tag, Typography, message } from 'antd';
-import { ReactNode, useEffect, useMemo, useState } from 'react';
+import { ReactNode, useMemo, useState } from 'react';
 import { generatePath, Link } from 'react-router-dom';
 
 import { paths } from '@ui/config/paths';
 import type { Stage } from '@ui/gen/api/v1alpha1/generated_pb';
-import {
-  useGetStageAutoPromotionCandidates,
-  useResumeStageAutoPromotion
-} from '@ui/gen/api/v2/core/core';
+import { useResumeStageAutoPromotion } from '@ui/gen/api/v2/core/core';
 
 import {
   AutoPromotionHoldEntry,
@@ -17,15 +14,15 @@ import {
   autoPromotionHoldStatePending,
   getAutoPromotionCandidate,
   getAutoPromotionHoldEntries,
-  originLabel,
-  type OriginLike
+  holdStateIcon,
+  originLabel
 } from './auto-promotion';
+import { useAutoPromotionCandidates } from './use-auto-promotion-candidates';
 
 type ResumeAutoPromotionDrawerProps = {
   stage: Stage;
   open: boolean;
   onClose: () => void;
-  focusOrigin?: OriginLike;
 };
 
 const holdStateLabel = (entry: AutoPromotionHoldEntry) =>
@@ -37,45 +34,34 @@ const holdStateColor = (entry: AutoPromotionHoldEntry) =>
 export const ResumeAutoPromotionDrawer = ({
   stage,
   open,
-  onClose,
-  focusOrigin
+  onClose
 }: ResumeAutoPromotionDrawerProps) => {
   const [selectedOriginKey, setSelectedOriginKey] = useState('');
 
   const projectName = stage?.metadata?.namespace || '';
   const stageName = stage?.metadata?.name || '';
 
-  const entries = useMemo(
-    () => getAutoPromotionHoldEntries(stage, focusOrigin),
-    [stage, focusOrigin]
-  );
+  const entries = useMemo(() => getAutoPromotionHoldEntries(stage), [stage]);
   const activeEntries = entries.filter(
     (entry) => entry.hold.state === autoPromotionHoldStateActive
   );
   const pendingEntries = entries.filter(
     (entry) => entry.hold.state === autoPromotionHoldStatePending
   );
-  const activeEntryKeys = activeEntries.map((entry) => entry.key).join('|');
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    if (selectedOriginKey && activeEntries.some((entry) => entry.key === selectedOriginKey)) {
-      return;
-    }
-    setSelectedOriginKey(activeEntries[0]?.key || '');
-  }, [open, activeEntryKeys, selectedOriginKey]);
+  // selectedOriginKey holds only explicit user choices; the effective
+  // selection falls back to the first active entry whenever the stored
+  // choice no longer matches an active hold.
+  const effectiveKey = activeEntries.some((entry) => entry.key === selectedOriginKey)
+    ? selectedOriginKey
+    : (activeEntries[0]?.key ?? '');
+  const selectedEntry = activeEntries.find((entry) => entry.key === effectiveKey);
 
-  const selectedEntry = activeEntries.find((entry) => entry.key === selectedOriginKey);
-
-  const candidatesQuery = useGetStageAutoPromotionCandidates(projectName, stageName, {
-    query: {
-      enabled: Boolean(open && projectName && stageName && entries.length)
-    }
-  });
-  const candidates =
-    candidatesQuery.data?.status === 200 ? candidatesQuery.data.data.candidates : undefined;
+  const { query: candidatesQuery, candidates } = useAutoPromotionCandidates(
+    projectName,
+    stageName,
+    Boolean(open && projectName && stageName && entries.length)
+  );
 
   const resumeMutation = useResumeStageAutoPromotion({
     mutation: {
@@ -147,10 +133,7 @@ export const ResumeAutoPromotionDrawer = ({
       <Flex align='center' gap={8} wrap='wrap'>
         <Typography.Text strong>{originLabel(entry.origin)}</Typography.Text>
         <Tag bordered={false} color={holdStateColor(entry)} className='m-0'>
-          <FontAwesomeIcon
-            icon={entry.hold.state === autoPromotionHoldStatePending ? faHourglassHalf : faPause}
-            className='mr-1'
-          />
+          <FontAwesomeIcon icon={holdStateIcon(entry.hold.state)} className='mr-1' />
           {holdStateLabel(entry)}
         </Tag>
       </Flex>
@@ -208,7 +191,11 @@ export const ResumeAutoPromotionDrawer = ({
             banner
             type='warning'
             message='No active auto-promotion hold can be resumed.'
-            description='A pending hold is still waiting for its rollback Promotion to settle.'
+            description={
+              pendingEntries.length
+                ? 'A pending hold is still waiting for its rollback Promotion to settle.'
+                : 'There are no auto-promotion holds on this Stage.'
+            }
           />
         )}
       </div>
@@ -218,7 +205,7 @@ export const ResumeAutoPromotionDrawer = ({
         {activeEntries.length > 1 && (
           <Radio.Group
             className='w-full'
-            value={selectedOriginKey}
+            value={effectiveKey}
             onChange={(event) => setSelectedOriginKey(event.target.value)}
           >
             <Flex vertical gap={10}>
@@ -231,7 +218,7 @@ export const ResumeAutoPromotionDrawer = ({
           </Radio.Group>
         )}
 
-        {pendingEntries.length > 0 && activeEntries.length > 0 && (
+        {pendingEntries.length > 0 && (
           <Flex vertical gap={8}>
             <Typography.Text strong className='text-xs uppercase'>
               Pending holds

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -131,9 +132,18 @@ func AutoPromotionHoldIdentityMatches(
 		AutoPromotionHoldTimesEqual(hold.CreatedAt, expected.CreatedAt)
 }
 
-// AutoPromotionHoldTimesEqual reports whether two optional Kubernetes timestamps
-// refer to the same instant, treating two nil values as equal. It is the single
-// canonical comparator shared by every auto-promotion hold identity check.
+// AutoPromotionHoldsEqual reports whether two holds are identical in every
+// field: the identity fields compared by AutoPromotionHoldIdentityMatches
+// plus State, Actor, and Reason. It is full-struct equality.
+func AutoPromotionHoldsEqual(a, b kargoapi.AutoPromotionHold) bool {
+	return AutoPromotionHoldIdentityMatches(a, b) &&
+		a.State == b.State &&
+		a.Actor == b.Actor &&
+		a.Reason == b.Reason
+}
+
+// AutoPromotionHoldTimesEqual reports whether two optional Kubernetes
+// timestamps refer to the same instant, treating two nil values as equal.
 func AutoPromotionHoldTimesEqual(lhs *metav1.Time, rhs *metav1.Time) bool {
 	switch {
 	case lhs == nil && rhs == nil:
@@ -143,6 +153,67 @@ func AutoPromotionHoldTimesEqual(lhs *metav1.Time, rhs *metav1.Time) bool {
 	default:
 		return lhs.Time.Equal(rhs.Time)
 	}
+}
+
+// SetClearAutoPromotionHoldAnnotation annotates promo with a JSON snapshot of
+// hold's identity so that, when promo succeeds, the Stage controller clears
+// exactly that hold and no other.
+func SetClearAutoPromotionHoldAnnotation(
+	promo *kargoapi.Promotion,
+	hold kargoapi.AutoPromotionHold,
+) {
+	req := &kargoapi.ClearAutoPromotionHoldRequest{
+		Origin:        hold.Origin,
+		PromotionName: hold.PromotionName,
+		PromotionUID:  hold.PromotionUID,
+		CreatedAt:     hold.CreatedAt,
+	}
+	if promo.Annotations == nil {
+		promo.Annotations = make(map[string]string, 1)
+	}
+	promo.Annotations[kargoapi.AnnotationKeyClearAutoPromotionHold] = req.String()
+}
+
+// ClearAutoPromotionHoldRequestFromPromotion returns the clear-hold request
+// annotated on promo, or nil when promo carries no such annotation or its
+// value cannot be parsed.
+func ClearAutoPromotionHoldRequestFromPromotion(
+	promo *kargoapi.Promotion,
+) *kargoapi.ClearAutoPromotionHoldRequest {
+	value := promo.Annotations[kargoapi.AnnotationKeyClearAutoPromotionHold]
+	if value == "" {
+		return nil
+	}
+	req := &kargoapi.ClearAutoPromotionHoldRequest{}
+	if err := json.Unmarshal([]byte(value), req); err != nil {
+		return nil
+	}
+	return req
+}
+
+// HoldMatchesClearAnnotation reports whether promo's clear-hold annotation
+// identifies exactly hold, i.e. whether a successful non-auto Promotion is
+// clearing the same Active hold that was observed when promo was created.
+// This prevents older Promotions from clearing newer rollback intent.
+func HoldMatchesClearAnnotation(
+	hold kargoapi.AutoPromotionHold,
+	promo *kargoapi.Promotion,
+) bool {
+	if hold.State != kargoapi.AutoPromotionHoldStateActive {
+		return false
+	}
+	req := ClearAutoPromotionHoldRequestFromPromotion(promo)
+	if req == nil {
+		return false
+	}
+	if hold.PromotionName == "" || req.PromotionName == "" {
+		return false
+	}
+	return hold.Origin.Equals(&req.Origin) &&
+		hold.PromotionName == req.PromotionName &&
+		hold.PromotionUID == req.PromotionUID &&
+		AutoPromotionHoldTimesEqual(hold.CreatedAt, req.CreatedAt) &&
+		(hold.CreatedAt == nil || !promo.CreationTimestamp.Time.Before(hold.CreatedAt.Time))
 }
 
 // AutoPromotionHoldOptions configures a hold created by
@@ -188,7 +259,8 @@ func (e *AutoPromotionHoldExistsError) Error() string {
 // controller to reconcile.
 //
 // It never overwrites an existing hold for the origin: when one is already
-// present it returns an *AutoPromotionHoldExistsError without changing state.
+// present it returns an error wrapping an *AutoPromotionHoldExistsError
+// (discoverable with errors.As) without changing state.
 //
 // promotion must be a non-auto Promotion of freight on stageKey's Stage and must
 // already be named (build it with kargo.NewPromotionBuilder); these invariants
@@ -212,7 +284,10 @@ func CreatePendingAutoPromotionHold(
 		createPromotion = c.Create
 	}
 
-	now := metav1.Now()
+	// Second-truncate the timestamp so the in-memory hold is identical to what
+	// every reader sees after the API server's RFC3339 serialization. This is
+	// what lets the cleanup path below re-find the hold by exact identity.
+	now := metav1.Now().Rfc3339Copy()
 	hold := kargoapi.AutoPromotionHold{
 		FreightName:   freight.Name,
 		Origin:        freight.Origin,
@@ -225,28 +300,26 @@ func CreatePendingAutoPromotionHold(
 
 	// Hold-first. The only precondition checked against live state is that no
 	// hold already exists for this origin; an in-flight rollback owns it.
-	var existing *kargoapi.AutoPromotionHold
-	if err := patchStageAutoPromotionHolds(
+	if _, _, err := PatchStageAutoPromotionHolds(
 		ctx,
 		c,
+		c,
 		stageKey,
-		func(stage *kargoapi.Stage) bool {
-			existing = nil
-			if h, ok := stage.Status.GetAutoPromotionHold(freight.Origin); ok {
-				existing = &h
-				return false
+		func(status *kargoapi.StageStatus) (bool, error) {
+			if existing, ok := status.GetAutoPromotionHold(freight.Origin); ok {
+				return false, &AutoPromotionHoldExistsError{
+					Origin: freight.Origin,
+					State:  existing.State,
+				}
 			}
-			if stage.Status.AutoPromotionHolds == nil {
-				stage.Status.AutoPromotionHolds = make(map[string]kargoapi.AutoPromotionHold, 1)
+			if status.AutoPromotionHolds == nil {
+				status.AutoPromotionHolds = make(map[string]kargoapi.AutoPromotionHold, 1)
 			}
-			stage.Status.AutoPromotionHolds[freight.Origin.String()] = hold
-			return true
+			status.AutoPromotionHolds[freight.Origin.String()] = hold
+			return true, nil
 		},
 	); err != nil {
-		return fmt.Errorf("create auto-promotion hold: %w", err)
-	}
-	if existing != nil {
-		return &AutoPromotionHoldExistsError{Origin: freight.Origin, State: existing.State}
+		return fmt.Errorf("error creating auto-promotion hold: %w", err)
 	}
 
 	if promotion.Annotations == nil {
@@ -258,21 +331,22 @@ func CreatePendingAutoPromotionHold(
 		// Only roll the hold back when the Promotion definitely did not persist;
 		// otherwise an orphaned hold would block auto-promotion indefinitely.
 		if !promotionCreateMayHavePersisted(err) {
-			if cleanupErr := patchStageAutoPromotionHolds(
+			if _, _, cleanupErr := PatchStageAutoPromotionHolds(
 				ctx,
 				c,
+				c,
 				stageKey,
-				func(stage *kargoapi.Stage) bool {
-					return removeMatchingAutoPromotionHold(&stage.Status, freight.Origin, hold)
+				func(status *kargoapi.StageStatus) (bool, error) {
+					return removeMatchingAutoPromotionHold(status, freight.Origin, hold), nil
 				},
 			); cleanupErr != nil {
 				return fmt.Errorf(
-					"create rollback Promotion: %w; clean up pending auto-promotion hold: %w",
+					"error creating rollback Promotion: %w; error cleaning up pending auto-promotion hold: %w",
 					err, cleanupErr,
 				)
 			}
 		}
-		return fmt.Errorf("create rollback Promotion: %w", err)
+		return fmt.Errorf("error creating rollback Promotion: %w", err)
 	}
 	return nil
 }
@@ -288,13 +362,13 @@ func validateAutoPromotionHoldRequest(
 ) error {
 	switch {
 	case c == nil:
-		return fmt.Errorf("client must not be nil")
+		return errors.New("client must not be nil")
 	case promotion == nil:
-		return fmt.Errorf("promotion must not be nil")
+		return errors.New("promotion must not be nil")
 	case promotion.Name == "":
-		return fmt.Errorf("promotion must be named; build it with kargo.NewPromotionBuilder")
+		return errors.New("promotion must be named; build it with kargo.NewPromotionBuilder")
 	case stageKey.Namespace == "" || stageKey.Name == "":
-		return fmt.Errorf("stage key must have a namespace and name")
+		return errors.New("stage key must have a namespace and name")
 	case promotion.Namespace != stageKey.Namespace || promotion.Spec.Stage != stageKey.Name:
 		return fmt.Errorf(
 			"promotion %q targets Stage %q/%q but the hold is for %q/%q",
@@ -308,44 +382,32 @@ func validateAutoPromotionHoldRequest(
 			promotion.Spec.Freight, freight.Name,
 		)
 	case promotion.Spec.Source == kargoapi.PromotionSourceAuto:
-		return fmt.Errorf("a held rollback Promotion must not have an auto source")
+		return errors.New("a held rollback Promotion must not have an auto source")
 	}
-	if _, err := kargoapi.ParseFreightOriginKey(freight.Origin.String()); err != nil {
+	if err := freight.Origin.Validate(); err != nil {
 		return fmt.Errorf("invalid Freight origin: %w", err)
 	}
 	return nil
 }
 
-// removeMatchingAutoPromotionHold deletes the origin's hold only when it still
-// exactly matches the pending hold this request created.
+// removeMatchingAutoPromotionHold deletes the origin's hold only when it is
+// still Pending and its identity exactly matches the pending hold this
+// request created. CreatedAt round-trips intact because it is written
+// second-truncated, and PromotionUID is empty on both sides because cleanup
+// only runs when the Promotion definitely did not persist.
 func removeMatchingAutoPromotionHold(
 	status *kargoapi.StageStatus,
 	origin kargoapi.FreightOrigin,
 	expected kargoapi.AutoPromotionHold,
 ) bool {
-	key := origin.String()
-	hold, ok := status.AutoPromotionHolds[key]
-	if !ok || !autoPromotionHoldMatchesPendingCreate(hold, expected) {
+	hold, ok := status.GetAutoPromotionHold(origin)
+	if !ok ||
+		hold.State != kargoapi.AutoPromotionHoldStatePending ||
+		!AutoPromotionHoldIdentityMatches(hold, expected) {
 		return false
 	}
-	delete(status.AutoPromotionHolds, key)
-	if len(status.AutoPromotionHolds) == 0 {
-		status.AutoPromotionHolds = nil
-	}
+	status.DeleteAutoPromotionHold(origin.String())
 	return true
-}
-
-// autoPromotionHoldMatchesPendingCreate reports whether hold is still exactly the
-// pending hold identified by expected, comparing only fields that survive API
-// serialization. The Promotion name is unique to a single create attempt.
-func autoPromotionHoldMatchesPendingCreate(
-	hold kargoapi.AutoPromotionHold,
-	expected kargoapi.AutoPromotionHold,
-) bool {
-	return hold.State == kargoapi.AutoPromotionHoldStatePending &&
-		hold.PromotionName == expected.PromotionName &&
-		hold.FreightName == expected.FreightName &&
-		hold.Origin.Equals(&expected.Origin)
 }
 
 // promotionCreateMayHavePersisted reports whether a create error may have been
@@ -373,28 +435,64 @@ func promotionCreateMayHavePersisted(err error) bool {
 	return !errors.As(err, &statusErr)
 }
 
-// patchStageAutoPromotionHolds mutates a Stage's status under optimistic locking,
-// retrying on conflict. mutate is re-run against each fresh snapshot and reports
-// whether it changed anything; when it returns false, no patch is sent.
-func patchStageAutoPromotionHolds(
+// PatchStageAutoPromotionHolds mutates the auto-promotion holds in the status
+// of the Stage identified by key, patching under optimistic locking and
+// retrying on conflict.
+//
+// reader fetches each fresh Stage snapshot while writer sends the status
+// patch; they are distinct parameters so a controller can read through a
+// cache-bypassing API reader while writing with its regular client. Callers
+// with a single suitable client pass it as both. A NotFound error from reader
+// propagates so each caller can decide whether it is tolerable.
+//
+// mutate is re-run against each fresh snapshot and reports whether it changed
+// anything; when it reports false, no patch is sent. An error returned by
+// mutate aborts the retries and is returned, so closures can surface typed
+// errors to callers. An empty AutoPromotionHolds map is normalized to nil
+// before patching, relieving mutate of that chore.
+//
+// The returned map contains the Stage's holds as last observed (post-patch
+// when one was sent) and the returned bool reports whether a patch was sent.
+func PatchStageAutoPromotionHolds(
 	ctx context.Context,
-	c client.Client,
+	reader client.Reader,
+	writer client.Client,
 	key client.ObjectKey,
-	mutate func(*kargoapi.Stage) bool,
-) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	mutate func(*kargoapi.StageStatus) (bool, error),
+) (map[string]kargoapi.AutoPromotionHold, bool, error) {
+	var holds map[string]kargoapi.AutoPromotionHold
+	var patched bool
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		holds = nil
+		patched = false
 		stage := &kargoapi.Stage{}
-		if err := c.Get(ctx, key, stage); err != nil {
+		if err := reader.Get(ctx, key, stage); err != nil {
 			return err
 		}
 		original := stage.DeepCopy()
-		if !mutate(stage) {
+		changed, err := mutate(&stage.Status)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			holds = stage.Status.AutoPromotionHolds
 			return nil
 		}
-		return c.Status().Patch(
+		if len(stage.Status.AutoPromotionHolds) == 0 {
+			stage.Status.AutoPromotionHolds = nil
+		}
+		if err = writer.Status().Patch(
 			ctx,
 			stage,
 			client.MergeFromWithOptions(original, client.MergeFromWithOptimisticLock{}),
-		)
-	})
+		); err != nil {
+			return err
+		}
+		holds = stage.Status.AutoPromotionHolds
+		patched = true
+		return nil
+	}); err != nil {
+		return nil, false, err
+	}
+	return holds, patched, nil
 }

@@ -1,10 +1,4 @@
-import {
-  faChevronLeft,
-  faChevronRight,
-  faCodeCommit,
-  faHourglassHalf,
-  faPause
-} from '@fortawesome/free-solid-svg-icons';
+import { faChevronLeft, faChevronRight, faCodeCommit } from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { Button, Flex, Tag, Tooltip, Typography } from 'antd';
 import Link from 'antd/es/typography/Link';
@@ -32,7 +26,12 @@ import { useDictionaryContext } from '../context/dictionary-context';
 import { useFreightTimelineControllerContext } from '../context/freight-timeline-controller-context';
 import { humanComprehendableArtifact } from '../freight/artifact-parts-utils';
 import { shortVersion } from '../freight/short-version-utils';
-import { autoPromotionHoldStatePending, getAutoPromotionHold } from '../promotion/auto-promotion';
+import {
+  autoPromotionHoldStatePending,
+  getAutoPromotionHold,
+  holdStateIcon,
+  holdStateMessage
+} from '../promotion/auto-promotion';
 
 import {
   ArtifactTypes,
@@ -129,18 +128,15 @@ export const StageFreight = (props: { stage: Stage }) => {
   const totalArtifacts =
     noOfContainerImages + noOfGitCommits + noOfHelmReleases + noOfGenericArtifacts;
   const isHoldPending = selectedAutoPromotionHold?.state === autoPromotionHoldStatePending;
-  const holdTooltip = isHoldPending
-    ? 'Rollback promotion pending. Auto-promotion will pause if it succeeds.'
-    : 'Auto-promotion paused after rollback.';
   const holdIcon = selectedAutoPromotionHold ? (
-    <Tooltip title={holdTooltip}>
+    <Tooltip title={holdStateMessage(selectedAutoPromotionHold.state)}>
       <span
         className={classNames(
           'inline-flex text-[10px]',
           isHoldPending ? 'text-amber-500' : 'text-orange-600'
         )}
       >
-        <FontAwesomeIcon icon={isHoldPending ? faHourglassHalf : faPause} />
+        <FontAwesomeIcon icon={holdStateIcon(selectedAutoPromotionHold.state)} />
       </span>
     </Tooltip>
   ) : null;

@@ -3,6 +3,7 @@ package v1alpha1
 import (
 	"crypto/sha1"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -271,17 +272,27 @@ func (f *FreightOrigin) String() string {
 // form and rejects empty parts or unsupported origin kinds.
 func ParseFreightOriginKey(key string) (FreightOrigin, error) {
 	kind, name, ok := strings.Cut(key, "/")
-	if !ok || kind == "" || name == "" {
+	if !ok {
 		return FreightOrigin{}, fmt.Errorf("invalid Freight origin key %q", key)
 	}
 
 	origin := FreightOrigin{Kind: FreightOriginKind(kind), Name: name}
-	switch origin.Kind {
-	case FreightOriginKindWarehouse:
-		return origin, nil
-	default:
-		return FreightOrigin{}, fmt.Errorf("invalid Freight origin kind %q", kind)
+	if err := origin.Validate(); err != nil {
+		return FreightOrigin{}, err
 	}
+	return origin, nil
+}
+
+// Validate returns an error if the FreightOrigin has an unsupported kind or an
+// empty name.
+func (f FreightOrigin) Validate() error {
+	if f.Kind != FreightOriginKindWarehouse {
+		return fmt.Errorf("invalid Freight origin kind %q", f.Kind)
+	}
+	if f.Name == "" {
+		return errors.New("Freight origin name must not be empty")
+	}
+	return nil
 }
 
 func (f *FreightOrigin) Equals(other *FreightOrigin) bool {
@@ -466,6 +477,11 @@ const (
 	AutoPromotionHoldStateActive AutoPromotionHoldState = "Active"
 )
 
+// AutoPromotionHoldReasonMaxLength is the maximum allowed length of an
+// AutoPromotionHold's Reason. The kubebuilder MaxLength marker on that field
+// must be kept in sync with this value.
+const AutoPromotionHoldReasonMaxLength = 1024
+
 // AutoPromotionHold pins a single FreightOrigin on a Stage, pausing
 // auto-promotion for that origin after a user-directed promotion intentionally
 // selects Freight other than the current auto-promotion candidate for the same
@@ -492,7 +508,8 @@ type AutoPromotionHold struct {
 	// Actor is an identifier for the user who caused the hold to be created.
 	Actor string `json:"actor,omitempty" protobuf:"bytes,5,opt,name=actor"`
 	// Reason is a free-form human-readable explanation of why the hold was
-	// created.
+	// created. The MaxLength marker below must match
+	// AutoPromotionHoldReasonMaxLength.
 	// +kubebuilder:validation:MaxLength=1024
 	Reason string `json:"reason,omitempty" protobuf:"bytes,6,opt,name=reason"`
 	// CreatedAt is the time at which the hold was created.
@@ -511,6 +528,19 @@ func (s *StageStatus) GetAutoPromotionHold(origin FreightOrigin) (AutoPromotionH
 		return AutoPromotionHold{}, false
 	}
 	return hold, true
+}
+
+// DeleteAutoPromotionHold removes the AutoPromotionHold for the given origin
+// key, normalizing an empty map to nil.
+func (s *StageStatus) DeleteAutoPromotionHold(key string) {
+	if s == nil {
+		return
+	}
+
+	delete(s.AutoPromotionHolds, key)
+	if len(s.AutoPromotionHolds) == 0 {
+		s.AutoPromotionHolds = nil
+	}
 }
 
 // GetConditions implements the conditions.Getter interface.

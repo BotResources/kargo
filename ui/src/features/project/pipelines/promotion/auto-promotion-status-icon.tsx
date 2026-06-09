@@ -1,13 +1,14 @@
-import { faBolt, faHourglassHalf, faPause } from '@fortawesome/free-solid-svg-icons';
+import { faBolt } from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { useMemo } from 'react';
 
 import type { Stage } from '@ui/gen/api/v1alpha1/generated_pb';
 
 import {
   autoPromotionHoldStateActive,
   autoPromotionHoldStatePending,
-  getAutoPromotionHoldEntries
+  holdStateIcon,
+  holdStateMessage,
+  stageHasAutoPromotionHoldInState
 } from './auto-promotion';
 
 type AutoPromotionStatusIconProps = {
@@ -19,30 +20,25 @@ export const AutoPromotionStatusIcon = ({
   stage,
   autoPromotionEnabled
 }: AutoPromotionStatusIconProps) => {
-  const holdEntries = useMemo(() => getAutoPromotionHoldEntries(stage), [stage]);
+  // An active hold outranks a pending one when both exist.
+  const holdState = stageHasAutoPromotionHoldInState(stage, autoPromotionHoldStateActive)
+    ? autoPromotionHoldStateActive
+    : stageHasAutoPromotionHoldInState(stage, autoPromotionHoldStatePending)
+      ? autoPromotionHoldStatePending
+      : undefined;
 
-  const hasActiveHold = holdEntries.some(
-    (entry) => entry.hold.state === autoPromotionHoldStateActive
-  );
-  const hasPendingHold = holdEntries.some(
-    (entry) => entry.hold.state === autoPromotionHoldStatePending
-  );
+  if (!autoPromotionEnabled && !holdState) {
+    return null;
+  }
 
-  const icon = hasActiveHold ? faPause : hasPendingHold ? faHourglassHalf : undefined;
-  const label = hasActiveHold
-    ? 'Auto-promotion paused after rollback'
-    : hasPendingHold
-      ? 'Rollback promotion pending. Auto-promotion will pause if it succeeds.'
-      : autoPromotionEnabled
-        ? 'Auto-promotion enabled'
-        : 'Auto-promotion hold exists, but auto-promotion is disabled';
+  const label = holdState ? holdStateMessage(holdState) : 'Auto-promotion enabled';
 
   return (
     <span title={label} aria-label={label} className='inline-flex mr-1.5 relative'>
       <FontAwesomeIcon icon={faBolt} className='text-[10px]' />
-      {icon && (
+      {holdState && (
         <FontAwesomeIcon
-          icon={icon}
+          icon={holdStateIcon(holdState)}
           className='text-[7px] absolute'
           style={{ bottom: '-5px', right: '-3px' }}
         />

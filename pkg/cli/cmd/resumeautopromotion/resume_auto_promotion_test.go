@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	kargoapi "github.com/akuity/kargo/api/v1alpha1"
 )
 
 func TestOptionsValidate(t *testing.T) {
@@ -20,8 +22,16 @@ func TestOptionsValidate(t *testing.T) {
 				Stage:   "fake-stage",
 				Origin:  "Warehouse/fake-warehouse",
 			},
-			assertions: func(t *testing.T, _ options, err error) {
+			assertions: func(t *testing.T, opts options, err error) {
 				require.NoError(t, err)
+				require.Equal(
+					t,
+					kargoapi.FreightOrigin{
+						Kind: kargoapi.FreightOriginKindWarehouse,
+						Name: "fake-warehouse",
+					},
+					opts.origin,
+				)
 			},
 		},
 		{

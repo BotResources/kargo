@@ -31,7 +31,9 @@ type PromotionSpec struct {
 
 	// Source describes the system path that created this Promotion. The value is
 	// immutable and is used by controllers to distinguish normal auto-promotion
-	// from user-directed promotion requests.
+	// from user-directed promotion requests. An empty value, possible only on
+	// Promotions created before this field existed, is treated the same as
+	// NonAuto.
 	Source string `json:"source,omitempty"`
 
 	// Stage specifies the name of the Stage to which this Promotion

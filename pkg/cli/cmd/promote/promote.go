@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/go-openapi/runtime"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
@@ -24,19 +23,6 @@ import (
 	"github.com/akuity/kargo/pkg/client/generated/models"
 	"github.com/akuity/kargo/pkg/client/watch"
 )
-
-type autoPromotionCandidateClient interface {
-	GetFreight(
-		*core.GetFreightParams,
-		runtime.ClientAuthInfoWriter,
-		...core.ClientOption,
-	) (*core.GetFreightOK, error)
-	GetStageAutoPromotionCandidates(
-		*core.GetStageAutoPromotionCandidatesParams,
-		runtime.ClientAuthInfoWriter,
-		...core.ClientOption,
-	) (*core.GetStageAutoPromotionCandidatesOK, error)
-}
 
 type promotionOptions struct {
 	genericiooptions.IOStreams
@@ -227,20 +213,15 @@ func (o *promotionOptions) run(ctx context.Context) error {
 		}
 		return nil
 	case o.Stage != "":
-		expectedAutoCandidate, err := o.expectedAutoPromotionCandidate(ctx, apiClient.Core)
-		if err != nil {
-			return err
-		}
 		var res *core.PromoteToStageCreated
 		if res, err = apiClient.Core.PromoteToStage(
 			core.NewPromoteToStageParams().
 				WithProject(o.Project).
 				WithStage(o.Stage).
 				WithBody(&models.PromoteToStageRequest{
-					ExpectedAutoCandidate: expectedAutoCandidate,
-					Freight:               o.FreightName,
-					FreightAlias:          o.FreightAlias,
-					Reason:                o.Reason,
+					Freight:      o.FreightName,
+					FreightAlias: o.FreightAlias,
+					Reason:       o.Reason,
 				}),
 			nil,
 		); err != nil {
@@ -298,67 +279,6 @@ func (o *promotionOptions) run(ctx context.Context) error {
 		return nil
 	}
 	return nil
-}
-
-// expectedAutoPromotionCandidate returns the current auto-promotion candidate
-// for the same origin as the Freight selected by this command. The value is
-// sent as a server-side precondition so the CLI gets stale-request protection
-// without exposing that implementation detail as a user-facing flag.
-func (o *promotionOptions) expectedAutoPromotionCandidate(
-	ctx context.Context,
-	coreClient autoPromotionCandidateClient,
-) (string, error) {
-	freightNameOrAlias := o.FreightName
-	if freightNameOrAlias == "" {
-		freightNameOrAlias = o.FreightAlias
-	}
-	// Resolve aliases before reading candidates because candidates are keyed by
-	// Freight origin, not by the name or alias the user typed.
-	freightRes, err := coreClient.GetFreight(
-		core.NewGetFreightParams().
-			WithContext(ctx).
-			WithProject(o.Project).
-			WithFreightNameOrAlias(freightNameOrAlias),
-		nil,
-	)
-	if err != nil {
-		return "", client.FormatAPIError("get freight", err)
-	}
-	if freightRes.Payload == nil ||
-		freightRes.Payload.Origin.Kind == nil ||
-		freightRes.Payload.Origin.Name == nil {
-		return "", nil
-	}
-
-	// Read candidates immediately before creating the Promotion. The server will
-	// verify this value again, which turns candidate changes into a retryable
-	// conflict instead of silently acting on stale CLI intent.
-	candidatesRes, err := coreClient.GetStageAutoPromotionCandidates(
-		core.NewGetStageAutoPromotionCandidatesParams().
-			WithContext(ctx).
-			WithProject(o.Project).
-			WithStage(o.Stage),
-		nil,
-	)
-	if err != nil {
-		return "", client.FormatAPIError("get auto-promotion candidates", err)
-	}
-	if candidatesRes.Payload == nil {
-		return "", nil
-	}
-	for _, candidate := range candidatesRes.Payload.Candidates {
-		if candidate == nil ||
-			candidate.Origin == nil ||
-			candidate.Origin.Kind == nil ||
-			candidate.Origin.Name == nil {
-			continue
-		}
-		if *candidate.Origin.Kind == *freightRes.Payload.Origin.Kind &&
-			*candidate.Origin.Name == *freightRes.Payload.Origin.Name {
-			return candidate.FreightName, nil
-		}
-	}
-	return "", nil
 }
 
 func (o *promotionOptions) waitForPromotions(

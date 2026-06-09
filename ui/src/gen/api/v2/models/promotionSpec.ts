@@ -20,7 +20,9 @@ referenced by the Stage field.
   freight: string;
   /** Source describes the system path that created this Promotion. The value is
 immutable and is used by controllers to distinguish normal auto-promotion
-from user-directed promotion requests. */
+from user-directed promotion requests. An empty value, possible only on
+Promotions created before this field existed, is treated the same as
+NonAuto. */
   source?: string;
   /** Stage specifies the name of the Stage to which this Promotion
 applies. The Stage referenced by this field MUST be in the same

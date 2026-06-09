@@ -8,24 +8,10 @@ const (
 
 	// AnnotationKeyClearAutoPromotionHold is an annotation key set on a
 	// user-directed Promotion when it should clear an existing auto-promotion
-	// hold after it succeeds. The value identifies the FreightOrigin the hold
-	// applies to.
+	// hold after it succeeds. The value of the annotation is a JSON object
+	// with the structure of the ClearAutoPromotionHoldRequest, identifying the
+	// hold to be cleared.
 	AnnotationKeyClearAutoPromotionHold = "kargo.akuity.io/clear-auto-promotion-hold"
-
-	// AnnotationKeyClearAutoPromotionHoldPromotion is an annotation key set
-	// alongside AnnotationKeyClearAutoPromotionHold. The value identifies the
-	// rollback Promotion recorded on the hold that should be cleared.
-	AnnotationKeyClearAutoPromotionHoldPromotion = "kargo.akuity.io/clear-auto-promotion-hold-promotion"
-
-	// AnnotationKeyClearAutoPromotionHoldPromotionUID is an annotation key set
-	// alongside AnnotationKeyClearAutoPromotionHold. The value identifies the
-	// rollback Promotion UID recorded on the hold that should be cleared.
-	AnnotationKeyClearAutoPromotionHoldPromotionUID = "kargo.akuity.io/clear-auto-promotion-hold-promotion-uid"
-
-	// AnnotationKeyClearAutoPromotionHoldCreatedAt is an annotation key set
-	// alongside AnnotationKeyClearAutoPromotionHold. The value identifies the
-	// hold creation time that should be cleared.
-	AnnotationKeyClearAutoPromotionHoldCreatedAt = "kargo.akuity.io/clear-auto-promotion-hold-created-at"
 
 	// AnnotationKeyRefresh is an annotation key that can be set on a resource
 	// to trigger a refresh of the resource by the controller. The value of the
@@ -44,6 +30,16 @@ const (
 	// annotation must be set to the identifier of the verification to be
 	// aborted.
 	AnnotationKeyAbort = "kargo.akuity.io/abort"
+
+	// AnnotationKeyAbortReason is an annotation key set on a Promotion by the
+	// controller that aborted it to record, in machine-readable form, why the
+	// Promotion was aborted.
+	AnnotationKeyAbortReason = "kargo.akuity.io/abort-reason"
+
+	// AnnotationValueAbortReasonAutoPromotionHold is the value used with
+	// AnnotationKeyAbortReason to indicate that a Promotion was aborted
+	// because an auto-promotion hold superseded it.
+	AnnotationValueAbortReasonAutoPromotionHold = "auto-promotion-hold"
 
 	// AnnotationKeyDescription is an annotation key that can be set on a
 	// resource to provide a description of it. The value of the annotation may

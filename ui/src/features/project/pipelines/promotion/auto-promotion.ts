@@ -1,3 +1,5 @@
+import { faHourglassHalf, faPause } from '@fortawesome/free-solid-svg-icons';
+
 import type {
   AutoPromotionHold,
   Freight,
@@ -15,7 +17,6 @@ export type AutoPromotionHoldEntry = {
   key: string;
   hold: AutoPromotionHold;
   origin?: OriginLike;
-  focused: boolean;
 };
 
 export const autoPromotionHoldStateActive = 'Active';
@@ -59,35 +60,23 @@ export const getAutoPromotionHold = (stage: Stage | undefined, origin?: OriginLi
   return stage?.status?.autoPromotionHolds?.[key];
 };
 
-export const originFromKey = (key: string): OriginLike | undefined => {
-  const [kind, name] = key.split('/');
-  if (!kind || !name) {
-    return undefined;
-  }
-  return { kind, name };
-};
+export const stageHasAutoPromotionHoldInState = (stage: Stage | undefined, state: string) =>
+  Object.values(stage?.status?.autoPromotionHolds || {}).some((hold) => hold?.state === state);
 
-export const getAutoPromotionHoldEntries = (
-  stage: Stage | undefined,
-  focusOrigin?: OriginLike
-): AutoPromotionHoldEntry[] => {
-  const focusOriginKey = originKey(focusOrigin);
-  const holds = stage?.status?.autoPromotionHolds || {};
+export const holdStateIcon = (state?: string) =>
+  state === autoPromotionHoldStatePending ? faHourglassHalf : faPause;
 
-  return Object.entries(holds)
-    .map(([key, hold]) => ({
-      key,
-      hold,
-      origin: hold?.origin || originFromKey(key),
-      focused: Boolean(focusOriginKey && focusOriginKey === key)
-    }))
+export const holdStateMessage = (state?: string) =>
+  state === autoPromotionHoldStatePending
+    ? 'Rollback promotion pending. Auto-promotion will pause if it succeeds.'
+    : 'Auto-promotion paused after rollback.';
+
+export const getAutoPromotionHoldEntries = (stage: Stage | undefined): AutoPromotionHoldEntry[] =>
+  Object.entries(stage?.status?.autoPromotionHolds || {})
+    .map(([key, hold]) => ({ key, hold, origin: hold.origin }))
     .sort((lhs, rhs) => {
-      if (lhs.focused !== rhs.focused) {
-        return lhs.focused ? -1 : 1;
-      }
       if (lhs.hold.state !== rhs.hold.state) {
         return lhs.hold.state === autoPromotionHoldStateActive ? -1 : 1;
       }
       return lhs.key.localeCompare(rhs.key);
     });
-};

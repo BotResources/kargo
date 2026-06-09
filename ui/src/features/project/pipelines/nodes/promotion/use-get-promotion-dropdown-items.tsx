@@ -1,9 +1,9 @@
-import { useMutation as useConnectMutation } from '@connectrpc/connect-query';
 import { faBoltLightning, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { useMutation } from '@tanstack/react-query';
 import { Typography } from 'antd';
 import { ItemType } from 'antd/es/menu/interface';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { generatePath, useNavigate } from 'react-router-dom';
 
 import { paths } from '@ui/config/paths';
@@ -14,13 +14,22 @@ import { useGetUpstreamFreight } from '@ui/features/project/pipelines/nodes/use-
 import {
   autoPromotionHoldStateActive,
   getAutoPromotionCandidateName,
-  getAutoPromotionHoldEntries
+  stageHasAutoPromotionHoldInState
 } from '@ui/features/project/pipelines/promotion/auto-promotion';
 import { ResumeAutoPromotionDrawer } from '@ui/features/project/pipelines/promotion/resume-auto-promotion-drawer';
 import { useManualApprovalModal } from '@ui/features/project/pipelines/promotion/use-manual-approval-modal';
-import { queryFreight } from '@ui/gen/api/service/v1alpha1/service-KargoService_connectquery';
 import { Stage } from '@ui/gen/api/v1alpha1/generated_pb';
-import { useGetStageAutoPromotionCandidates, usePromoteToStage } from '@ui/gen/api/v2/core/core';
+import {
+  getStageAutoPromotionCandidates,
+  queryFreightsRest,
+  usePromoteToStage
+} from '@ui/gen/api/v2/core/core';
+
+// The generated REST client types this endpoint's response as an open map;
+// the eligibility check only reads the freight names of the default group.
+type QueryFreightsGroups = {
+  groups?: Record<string, { freight?: { metadata?: { name?: string } }[] }>;
+};
 
 export const useGetPromotionDropdownItems = (stage: Stage) => {
   const [resumeAutoPromotionOpen, setResumeAutoPromotionOpen] = useState(false);
@@ -38,19 +47,21 @@ export const useGetPromotionDropdownItems = (stage: Stage) => {
   const controlFlow = isStageControlFlow(stage);
 
   const upstreamFreights = useGetUpstreamFreight(stage);
-  const autoPromotionHoldEntries = useMemo(() => getAutoPromotionHoldEntries(stage), [stage]);
-  const hasActiveAutoPromotionHold = autoPromotionHoldEntries.some(
-    (entry) => entry.hold.state === autoPromotionHoldStateActive
+  const hasActiveAutoPromotionHold = stageHasAutoPromotionHoldInState(
+    stage,
+    autoPromotionHoldStateActive
   );
 
-  const queryFreightMutation = useConnectMutation(queryFreight);
-  const autoPromotionCandidatesQuery = useGetStageAutoPromotionCandidates(projectName, stageName, {
-    query: {
-      enabled: Boolean(projectName && stageName && !controlFlow)
-    }
+  // A mutation (rather than a query) so the check runs on demand and failures
+  // surface through the global mutation error toast.
+  const queryFreightMutation = useMutation({
+    mutationFn: () => queryFreightsRest(projectName, { stage: stageName })
   });
 
   const showManualApproveModal = useManualApprovalModal();
+
+  const goToPromotePage = (freight: string) =>
+    navigate(generatePath(paths.promote, { name: projectName, freight, stage: stageName }));
 
   const ensureEligibilityBeforeAction = async ({
     freight,
@@ -63,13 +74,11 @@ export const useGetPromotionDropdownItems = (stage: Stage) => {
       return;
     }
 
-    const freightResponse = await queryFreightMutation.mutateAsync({
-      project: projectName,
-      stage: stageName
-    });
+    const freightResponse = await queryFreightMutation.mutateAsync();
 
+    const groups = (freightResponse.data as QueryFreightsGroups).groups;
     const isEligible = Boolean(
-      freightResponse?.groups?.['']?.freight?.find((item) => item?.metadata?.name === freight)
+      groups?.['']?.freight?.find((item) => item?.metadata?.name === freight)
     );
 
     if (isEligible) {
@@ -87,14 +96,7 @@ export const useGetPromotionDropdownItems = (stage: Stage) => {
   const handlePromoteFromUpstream = (freight?: string) => {
     ensureEligibilityBeforeAction({
       freight,
-      onSuccess: (eligibleFreight) =>
-        navigate(
-          generatePath(paths.promote, {
-            name: projectName,
-            freight: eligibleFreight,
-            stage: stageName
-          })
-        )
+      onSuccess: goToPromotePage
     });
   };
 
@@ -117,36 +119,23 @@ export const useGetPromotionDropdownItems = (stage: Stage) => {
   const handleInstantPromoteFromUpstream = (freight?: string) => {
     ensureEligibilityBeforeAction({
       freight,
-      onSuccess: (eligibleFreight) => {
+      onSuccess: async (eligibleFreight) => {
         const upstreamFreight = upstreamFreights?.find((item) => item?.name === eligibleFreight);
-        if (
-          autoPromotionCandidatesQuery.isLoading ||
-          autoPromotionCandidatesQuery.isFetching ||
-          !autoPromotionCandidatesQuery.data
-        ) {
-          navigate(
-            generatePath(paths.promote, {
-              name: projectName,
-              freight: eligibleFreight,
-              stage: stageName
-            })
-          );
+
+        let candidateName: string | undefined;
+        try {
+          const response = await getStageAutoPromotionCandidates(projectName, stageName);
+          const candidates = response.status === 200 ? response.data.candidates : undefined;
+          candidateName = getAutoPromotionCandidateName(candidates, upstreamFreight);
+        } catch {
+          // Without knowing the current candidate, instant promotion could
+          // silently pause auto-promotion; fall back to the promote page.
+          goToPromotePage(eligibleFreight);
           return;
         }
-        const candidates =
-          autoPromotionCandidatesQuery.data?.status === 200
-            ? autoPromotionCandidatesQuery.data.data.candidates
-            : undefined;
-        const candidateName = getAutoPromotionCandidateName(candidates, upstreamFreight);
 
         if (candidateName && candidateName !== eligibleFreight) {
-          navigate(
-            generatePath(paths.promote, {
-              name: projectName,
-              freight: eligibleFreight,
-              stage: stageName
-            })
-          );
+          goToPromotePage(eligibleFreight);
           return;
         }
 

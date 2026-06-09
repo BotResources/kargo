@@ -984,6 +984,51 @@ func TestFreightOrigin_String(t *testing.T) {
 	require.Empty(t, (*FreightOrigin)(nil).String())
 }
 
+func TestFreightOrigin_Validate(t *testing.T) {
+	testCases := []struct {
+		name      string
+		origin    FreightOrigin
+		expectErr string
+	}{
+		{
+			name: "valid warehouse origin",
+			origin: FreightOrigin{
+				Kind: FreightOriginKindWarehouse,
+				Name: "fake-warehouse",
+			},
+		},
+		{
+			name:      "empty kind",
+			origin:    FreightOrigin{Name: "fake-warehouse"},
+			expectErr: "invalid Freight origin kind",
+		},
+		{
+			name: "unsupported kind",
+			origin: FreightOrigin{
+				Kind: FreightOriginKind("Stage"),
+				Name: "fake-stage",
+			},
+			expectErr: "invalid Freight origin kind",
+		},
+		{
+			name:      "empty name",
+			origin:    FreightOrigin{Kind: FreightOriginKindWarehouse},
+			expectErr: "name must not be empty",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := testCase.origin.Validate()
+			if testCase.expectErr != "" {
+				require.ErrorContains(t, err, testCase.expectErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestParseFreightOriginKey(t *testing.T) {
 	testCases := []struct {
 		name           string
@@ -1035,13 +1080,13 @@ func TestParseFreightOriginKey(t *testing.T) {
 }
 
 func TestStageStatus_GetAutoPromotionHold(t *testing.T) {
-	origin := FreightOrigin{
+	testOrigin := FreightOrigin{
 		Kind: FreightOriginKindWarehouse,
 		Name: "fake-warehouse",
 	}
-	hold := AutoPromotionHold{
+	testHold := AutoPromotionHold{
 		FreightName: "fake-freight",
-		Origin:      origin,
+		Origin:      testOrigin,
 		State:       AutoPromotionHoldStateActive,
 	}
 
@@ -1062,12 +1107,12 @@ func TestStageStatus_GetAutoPromotionHold(t *testing.T) {
 			name: "hold exists",
 			status: &StageStatus{
 				AutoPromotionHolds: map[string]AutoPromotionHold{
-					origin.String(): hold,
+					testOrigin.String(): testHold,
 				},
 			},
-			assertions: func(t *testing.T, actual AutoPromotionHold, ok bool) {
+			assertions: func(t *testing.T, hold AutoPromotionHold, ok bool) {
 				require.True(t, ok)
-				require.Equal(t, hold, actual)
+				require.Equal(t, testHold, hold)
 			},
 		},
 		{
@@ -1082,8 +1127,81 @@ func TestStageStatus_GetAutoPromotionHold(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			hold, ok := testCase.status.GetAutoPromotionHold(origin)
+			hold, ok := testCase.status.GetAutoPromotionHold(testOrigin)
 			testCase.assertions(t, hold, ok)
+		})
+	}
+}
+
+func TestStageStatus_DeleteAutoPromotionHold(t *testing.T) {
+	testOrigin := FreightOrigin{
+		Kind: FreightOriginKindWarehouse,
+		Name: "fake-warehouse",
+	}
+	otherOrigin := FreightOrigin{
+		Kind: FreightOriginKindWarehouse,
+		Name: "other-warehouse",
+	}
+	testHold := AutoPromotionHold{
+		FreightName: "fake-freight",
+		Origin:      testOrigin,
+		State:       AutoPromotionHoldStateActive,
+	}
+
+	testCases := []struct {
+		name       string
+		status     *StageStatus
+		assertions func(*testing.T, *StageStatus)
+	}{
+		{
+			name:   "nil status",
+			status: nil,
+			assertions: func(t *testing.T, status *StageStatus) {
+				require.Nil(t, status)
+			},
+		},
+		{
+			name:   "nil map",
+			status: &StageStatus{},
+			assertions: func(t *testing.T, status *StageStatus) {
+				require.Nil(t, status.AutoPromotionHolds)
+			},
+		},
+		{
+			name: "deleting the last hold normalizes the map to nil",
+			status: &StageStatus{
+				AutoPromotionHolds: map[string]AutoPromotionHold{
+					testOrigin.String(): testHold,
+				},
+			},
+			assertions: func(t *testing.T, status *StageStatus) {
+				require.Nil(t, status.AutoPromotionHolds)
+			},
+		},
+		{
+			name: "other origins' holds are untouched",
+			status: &StageStatus{
+				AutoPromotionHolds: map[string]AutoPromotionHold{
+					testOrigin.String():  testHold,
+					otherOrigin.String(): {Origin: otherOrigin},
+				},
+			},
+			assertions: func(t *testing.T, status *StageStatus) {
+				require.Equal(
+					t,
+					map[string]AutoPromotionHold{
+						otherOrigin.String(): {Origin: otherOrigin},
+					},
+					status.AutoPromotionHolds,
+				)
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			testCase.status.DeleteAutoPromotionHold(testOrigin.String())
+			testCase.assertions(t, testCase.status)
 		})
 	}
 }

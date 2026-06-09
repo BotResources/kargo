@@ -219,7 +219,7 @@ func TestSelectAutoPromotionCandidates(t *testing.T) {
 		Kind: kargoapi.FreightOriginKindWarehouse,
 		Name: "other-warehouse",
 	}
-	stage := &kargoapi.Stage{
+	newestFreightStage := &kargoapi.Stage{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "fake-stage",
 			Namespace: "fake-project",
@@ -241,52 +241,14 @@ func TestSelectAutoPromotionCandidates(t *testing.T) {
 			},
 		},
 	}
-
-	candidates, err := SelectAutoPromotionCandidates(
-		stage,
-		[]kargoapi.Freight{
-			{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:              "older-freight",
-					CreationTimestamp: metav1.Time{Time: now.Add(-time.Hour)},
-				},
-				Origin: warehouseOrigin,
-			},
-			{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:              "newer-freight",
-					CreationTimestamp: metav1.Time{Time: now},
-				},
-				Origin: warehouseOrigin,
-			},
-			{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:              "other-freight",
-					CreationTimestamp: metav1.Time{Time: now.Add(-30 * time.Minute)},
-				},
-				Origin: otherOrigin,
-			},
-		},
-	)
-	require.NoError(t, err)
-	require.Len(t, candidates, 2)
-	require.Equal(t, "newer-freight", candidates[warehouseOrigin.String()].Name)
-	require.Equal(t, "other-freight", candidates[otherOrigin.String()].Name)
-}
-
-func TestSelectAutoPromotionCandidatesForMatchUpstream(t *testing.T) {
-	origin := kargoapi.FreightOrigin{
-		Kind: kargoapi.FreightOriginKindWarehouse,
-		Name: "fake-warehouse",
-	}
-	stage := &kargoapi.Stage{
+	matchUpstreamStage := &kargoapi.Stage{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "fake-stage",
 			Namespace: "fake-project",
 		},
 		Spec: kargoapi.StageSpec{
 			RequestedFreight: []kargoapi.FreightRequest{{
-				Origin: origin,
+				Origin: warehouseOrigin,
 				Sources: kargoapi.FreightSources{
 					Stages: []string{"upstream"},
 					AutoPromotionOptions: &kargoapi.AutoPromotionOptions{
@@ -297,28 +259,107 @@ func TestSelectAutoPromotionCandidatesForMatchUpstream(t *testing.T) {
 		},
 	}
 
-	candidates, err := SelectAutoPromotionCandidates(
-		stage,
-		[]kargoapi.Freight{{
-			ObjectMeta: metav1.ObjectMeta{Name: "upstream-current-freight"},
-			Origin:     origin,
-		}},
-	)
-	require.NoError(t, err)
-	require.Equal(t, "upstream-current-freight", candidates[origin.String()].Name)
-
-	_, err = SelectAutoPromotionCandidates(
-		stage,
-		[]kargoapi.Freight{
-			{
-				ObjectMeta: metav1.ObjectMeta{Name: "first-freight"},
-				Origin:     origin,
+	testCases := []struct {
+		name             string
+		stage            *kargoapi.Stage
+		availableFreight []kargoapi.Freight
+		assert           func(*testing.T, map[string]kargoapi.Freight, error)
+	}{
+		{
+			name:  "newest Freight selected per origin",
+			stage: newestFreightStage,
+			availableFreight: []kargoapi.Freight{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "older-freight",
+						CreationTimestamp: metav1.Time{Time: now.Add(-time.Hour)},
+					},
+					Origin: warehouseOrigin,
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "newer-freight",
+						CreationTimestamp: metav1.Time{Time: now},
+					},
+					Origin: warehouseOrigin,
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "other-freight",
+						CreationTimestamp: metav1.Time{Time: now.Add(-30 * time.Minute)},
+					},
+					Origin: otherOrigin,
+				},
 			},
-			{
-				ObjectMeta: metav1.ObjectMeta{Name: "second-freight"},
-				Origin:     origin,
+			assert: func(t *testing.T, candidates map[string]kargoapi.Freight, err error) {
+				require.NoError(t, err)
+				require.Len(t, candidates, 2)
+				require.Equal(t, "newer-freight", candidates[warehouseOrigin.String()].Name)
+				require.Equal(t, "other-freight", candidates[otherOrigin.String()].Name)
 			},
 		},
-	)
-	require.ErrorContains(t, err, "unexpectedly found 2 available Freight")
+		{
+			name:  "creation-time tie broken by lexically greater name",
+			stage: newestFreightStage,
+			availableFreight: []kargoapi.Freight{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "aaa-freight",
+						CreationTimestamp: metav1.Time{Time: now},
+					},
+					Origin: warehouseOrigin,
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "bbb-freight",
+						CreationTimestamp: metav1.Time{Time: now},
+					},
+					Origin: warehouseOrigin,
+				},
+			},
+			assert: func(t *testing.T, candidates map[string]kargoapi.Freight, err error) {
+				require.NoError(t, err)
+				require.Equal(t, "bbb-freight", candidates[warehouseOrigin.String()].Name)
+			},
+		},
+		{
+			name:  "matchUpstream selects the single available Freight",
+			stage: matchUpstreamStage,
+			availableFreight: []kargoapi.Freight{{
+				ObjectMeta: metav1.ObjectMeta{Name: "upstream-current-freight"},
+				Origin:     warehouseOrigin,
+			}},
+			assert: func(t *testing.T, candidates map[string]kargoapi.Freight, err error) {
+				require.NoError(t, err)
+				require.Equal(t, "upstream-current-freight", candidates[warehouseOrigin.String()].Name)
+			},
+		},
+		{
+			name:  "matchUpstream with multiple available Freight errors",
+			stage: matchUpstreamStage,
+			availableFreight: []kargoapi.Freight{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "first-freight"},
+					Origin:     warehouseOrigin,
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "second-freight"},
+					Origin:     warehouseOrigin,
+				},
+			},
+			assert: func(t *testing.T, _ map[string]kargoapi.Freight, err error) {
+				require.ErrorContains(t, err, "unexpectedly found 2 available Freight")
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			candidates, err := SelectAutoPromotionCandidates(
+				testCase.stage,
+				testCase.availableFreight,
+			)
+			testCase.assert(t, candidates, err)
+		})
+	}
 }

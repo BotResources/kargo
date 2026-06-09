@@ -1,4 +1,3 @@
-import { useMutation as useConnectMutation } from '@connectrpc/connect-query';
 import { faTruckArrowRight } from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { Alert, Button, Drawer, Flex, Input } from 'antd';
@@ -11,9 +10,8 @@ import { useExtensionsContext } from '@ui/extensions/extensions-context';
 import { ModalComponentProps } from '@ui/features/common/modal/modal-context';
 import { getCurrentFreight } from '@ui/features/common/utils';
 import { IAction, useActionContext } from '@ui/features/project/pipelines/context/action-context';
-import { promoteDownstream } from '@ui/gen/api/service/v1alpha1/service-KargoService_connectquery';
 import { Freight, Stage } from '@ui/gen/api/v1alpha1/generated_pb';
-import { useGetStageAutoPromotionCandidates, usePromoteToStage } from '@ui/gen/api/v2/core/core';
+import { usePromoteDownstream, usePromoteToStage } from '@ui/gen/api/v2/core/core';
 
 import { useDictionaryContext } from '../context/dictionary-context';
 import { isStageControlFlow } from '../nodes/stage-meta-utils';
@@ -26,6 +24,7 @@ import {
 } from './auto-promotion';
 import { FreightDetails } from './freight-details';
 import styles from './promote.module.less';
+import { useAutoPromotionCandidates } from './use-auto-promotion-candidates';
 
 type PromoteProps = ModalComponentProps & {
   stage: Stage;
@@ -53,22 +52,13 @@ export const Promote = (props: PromoteProps) => {
   const shouldCheckAutoPromotionCandidate = Boolean(
     projectName && stageName && !isDownstreamPromotion
   );
-  const autoPromotionCandidatesQuery = useGetStageAutoPromotionCandidates(
-    projectName || '',
-    stageName || '',
-    {
-      query: {
-        enabled: shouldCheckAutoPromotionCandidate
-      }
-    }
-  );
+  const { query: autoPromotionCandidatesQuery, candidates: autoPromotionCandidates } =
+    useAutoPromotionCandidates(projectName, stageName, shouldCheckAutoPromotionCandidate);
 
   const isCheckingAutoPromotionCandidate =
     shouldCheckAutoPromotionCandidate && autoPromotionCandidatesQuery.isLoading;
-  const autoPromotionCandidates =
-    autoPromotionCandidatesQuery.data?.status === 200
-      ? autoPromotionCandidatesQuery.data.data.candidates
-      : undefined;
+  const candidateCheckFailed =
+    shouldCheckAutoPromotionCandidate && autoPromotionCandidatesQuery.isError;
   const candidateName = getAutoPromotionCandidateName(autoPromotionCandidates, props.freight);
   const candidateFreightPath = candidateName
     ? generatePath(paths.freight, { name: projectName, freightName: candidateName })
@@ -76,11 +66,7 @@ export const Promote = (props: PromoteProps) => {
   const candidateFreightLink = candidateFreightPath ? (
     <Link
       to={candidateFreightPath}
-      onClick={(event) => {
-        event.preventDefault();
-        actionContext?.cancel();
-        navigate(candidateFreightPath);
-      }}
+      onClick={() => actionContext?.cancel()}
       style={{ overflowWrap: 'anywhere' }}
     >
       {candidateName}
@@ -112,28 +98,31 @@ export const Promote = (props: PromoteProps) => {
     }
   });
 
-  const promoteDownstreamActionMutation = useConnectMutation(promoteDownstream, {
-    onSuccess: () => {
-      // navigate
-      navigate(
-        generatePath(paths.project, {
-          name: projectName
-        })
-      );
+  const promoteDownstreamActionMutation = usePromoteDownstream({
+    mutation: {
+      onSuccess: (response) => {
+        if (response.status !== 201) {
+          return;
+        }
+        // navigate
+        navigate(
+          generatePath(paths.project, {
+            name: projectName
+          })
+        );
 
-      actionContext?.cancel();
+        actionContext?.cancel();
+      }
     }
   });
 
   const onPromote = () => {
-    const downstreamPayload = {
-      stage: stageName,
-      project: projectName,
-      freight: freightName
-    };
-
     if (isDownstreamPromotion) {
-      promoteDownstreamActionMutation.mutate(downstreamPayload);
+      promoteDownstreamActionMutation.mutate({
+        project: projectName,
+        stage: stageName,
+        data: { freight: freightName }
+      });
       return;
     }
 
@@ -186,7 +175,7 @@ export const Promote = (props: PromoteProps) => {
               promoteActionMutation.isPending ||
               promoteDownstreamActionMutation.isPending
             }
-            disabled={isCheckingAutoPromotionCandidate}
+            disabled={isCheckingAutoPromotionCandidate || candidateCheckFailed}
           >
             {isCheckingAutoPromotionCandidate
               ? 'Checking auto-promotion'
@@ -207,6 +196,21 @@ export const Promote = (props: PromoteProps) => {
             type='info'
             message='Checking the current auto-promotion candidate.'
             description='Promotion is disabled until Kargo can show whether this will pause auto-promotion.'
+          />
+        )}
+
+        {candidateCheckFailed && (
+          <Alert
+            className='-mx-6'
+            banner
+            type='warning'
+            message='Could not determine the current auto-promotion candidate.'
+            description={`Promoting may pause auto-promotion for ${selectedOriginLabel}.`}
+            action={
+              <Button size='small' onClick={() => autoPromotionCandidatesQuery.refetch()}>
+                Retry
+              </Button>
+            }
           />
         )}
 

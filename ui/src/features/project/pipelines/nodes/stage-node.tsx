@@ -27,7 +27,6 @@ import { timestampDate } from '@ui/utils/connectrpc-utils';
 import { useDictionaryContext } from '../context/dictionary-context';
 import { useGraphContext } from '../context/graph-context';
 import { stageIndexer } from '../graph/node-indexer';
-import { getAutoPromotionHoldEntries } from '../promotion/auto-promotion';
 import { AutoPromotionStatusIcon } from '../promotion/auto-promotion-status-icon';
 import { DropOverlay } from '../promotion/drag-and-drop/drop-overlay';
 
@@ -119,8 +118,6 @@ export const StageNode = (props: { stage: Stage }) => {
     }
   });
 
-  const hasAutoPromotionHold = getAutoPromotionHoldEntries(props.stage).length > 0;
-
   return (
     <div
       ref={setNodeRef}
@@ -143,12 +140,10 @@ export const StageNode = (props: { stage: Stage }) => {
         }}
         title={
           <>
-            {(autoPromotionMode || hasAutoPromotionHold) && (
-              <AutoPromotionStatusIcon
-                stage={props.stage}
-                autoPromotionEnabled={Boolean(autoPromotionMode)}
-              />
-            )}
+            <AutoPromotionStatusIcon
+              stage={props.stage}
+              autoPromotionEnabled={Boolean(autoPromotionMode)}
+            />
             <span className='text-xs text-wrap mr-auto'>{props.stage.metadata?.name}</span>
           </>
         }

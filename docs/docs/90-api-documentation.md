@@ -1631,7 +1631,7 @@ RawFormat specifies the format for raw resource representation.
 | promotionName | string |  PromotionName is the name of the rollback Promotion associated with this hold, when applicable. |
 | promotionUID | string |  PromotionUID is the UID of the rollback Promotion. Used to prevent an older failed rollback from clearing a newer hold. |
 | actor | string |  Actor is an identifier for the user who caused the hold to be created. |
-| reason | string |  Reason is a free-form human-readable explanation of why the hold was created.  |
+| reason | string |  Reason is a free-form human-readable explanation of why the hold was created. The MaxLength marker below must match AutoPromotionHoldReasonMaxLength.  |
 | createdAt | k8s.io.apimachinery.pkg.apis.meta.v1.Time |  CreatedAt is the time at which the hold was created. |
 
 
@@ -2277,7 +2277,7 @@ RawFormat specifies the format for raw resource representation.
 | ----- | ---- | ----------- |
 | stage | string |  Stage specifies the name of the Stage to which this Promotion applies. The Stage referenced by this field MUST be in the same namespace as the Promotion.       |
 | freight | string |  Freight specifies the piece of Freight to be promoted into the Stage referenced by the Stage field.       |
-| source | string |  Source describes the system path that created this Promotion. The value is immutable and is used by controllers to distinguish normal auto-promotion from user-directed promotion requests. |
+| source | string |  Source describes the system path that created this Promotion. The value is immutable and is used by controllers to distinguish normal auto-promotion from user-directed promotion requests. An empty value, possible only on Promotions created before this field existed, is treated the same as NonAuto. |
 | vars | [ExpressionVariable](#github-com-akuity-kargo-api-v1alpha1-ExpressionVariable) |  Vars is a list of variables that can be referenced by expressions in promotion steps. |
 | steps | [PromotionStep](#github-com-akuity-kargo-api-v1alpha1-PromotionStep) |  Steps specifies the directives to be executed as part of this Promotion. The order in which the directives are executed is the order in which they are listed in this field.     |
 

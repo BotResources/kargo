@@ -171,6 +171,44 @@ func Test_webhook_Default(t *testing.T) {
 			},
 		},
 		{
+			name: "preserves explicitly set source",
+			webhook: &webhook{
+				admissionRequestFromContextFn: admission.RequestFromContext,
+				getStageFn: func(
+					context.Context,
+					client.Client,
+					types.NamespacedName,
+				) (*kargoapi.Stage, error) {
+					return &kargoapi.Stage{
+						Spec: kargoapi.StageSpec{
+							Shard: "fake-shard",
+						},
+					}, nil
+				},
+				isRequestFromKargoControlplaneFn: func(admission.Request) bool {
+					return false
+				},
+			},
+			req: admission.Request{
+				AdmissionRequest: admissionv1.AdmissionRequest{
+					Operation: admissionv1.Create,
+				},
+			},
+			promotion: &kargoapi.Promotion{
+				Spec: kargoapi.PromotionSpec{
+					Stage:  "fake-stage",
+					Source: kargoapi.PromotionSourceAuto,
+					Steps: []kargoapi.PromotionStep{
+						{},
+					},
+				},
+			},
+			assertions: func(t *testing.T, promo *kargoapi.Promotion, err error) {
+				require.NoError(t, err)
+				require.Equal(t, kargoapi.PromotionSourceAuto, promo.Spec.Source)
+			},
+		},
+		{
 			name: "set abort actor when request doesn't come from kargo control plane",
 			webhook: &webhook{
 				admissionRequestFromContextFn: admission.RequestFromContext,

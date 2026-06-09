@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/go-openapi/swag/conv"
 	"github.com/spf13/cobra"
 	"k8s.io/cli-runtime/pkg/genericiooptions"
+	"k8s.io/utils/ptr"
 
 	kargoapi "github.com/akuity/kargo/api/v1alpha1"
 	"github.com/akuity/kargo/pkg/cli/client"
@@ -29,6 +29,9 @@ type options struct {
 	Project string
 	Stage   string
 	Origin  string
+
+	// origin is derived from Origin by validate().
+	origin kargoapi.FreightOrigin
 }
 
 func NewCommand(cfg config.CLIConfig, streams genericiooptions.IOStreams) *cobra.Command {
@@ -97,8 +100,11 @@ func (o *options) validate() error {
 	}
 	if o.Origin == "" {
 		errs = append(errs, fmt.Errorf("%s is required", option.OriginFlag))
-	} else if _, err := kargoapi.ParseFreightOriginKey(o.Origin); err != nil {
-		errs = append(errs, fmt.Errorf("invalid %s %q: %w", option.OriginFlag, o.Origin, err))
+	} else {
+		var err error
+		if o.origin, err = kargoapi.ParseFreightOriginKey(o.Origin); err != nil {
+			errs = append(errs, fmt.Errorf("invalid %s %q: %w", option.OriginFlag, o.Origin, err))
+		}
 	}
 
 	return errors.Join(errs...)
@@ -110,13 +116,9 @@ func (o *options) run(ctx context.Context) error {
 		return fmt.Errorf("get client from config: %w", err)
 	}
 
-	origin, err := kargoapi.ParseFreightOriginKey(o.Origin)
-	if err != nil {
-		return fmt.Errorf("parse origin: %w", err)
-	}
 	req := &models.ResumeStageAutoPromotionRequest{}
-	req.Origin.Kind = conv.Pointer(string(origin.Kind))
-	req.Origin.Name = conv.Pointer(origin.Name)
+	req.Origin.Kind = ptr.To(string(o.origin.Kind))
+	req.Origin.Name = ptr.To(o.origin.Name)
 
 	if _, err = apiClient.Core.ResumeStageAutoPromotion(
 		core.NewResumeStageAutoPromotionParams().
@@ -128,6 +130,11 @@ func (o *options) run(ctx context.Context) error {
 		return client.FormatAPIError("resume auto-promotion", err)
 	}
 
-	_, _ = fmt.Fprintln(o.Out, "Auto-promotion resumed.")
+	_, _ = fmt.Fprintf(
+		o.Out,
+		"Auto-promotion resumed for origin %q on stage %q.\n",
+		o.Origin,
+		o.Stage,
+	)
 	return nil
 }

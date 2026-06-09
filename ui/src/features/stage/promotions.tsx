@@ -24,7 +24,7 @@ import {
 import { ListPromotionsResponse } from '@ui/gen/api/service/v1alpha1/service_pb';
 import { KargoService } from '@ui/gen/api/service/v1alpha1/service_pb';
 import { ArgoCDShard } from '@ui/gen/api/service/v1alpha1/service_pb';
-import { Freight, Promotion, Stage } from '@ui/gen/api/v1alpha1/generated_pb';
+import { Freight, Promotion } from '@ui/gen/api/v1alpha1/generated_pb';
 import uiPlugins from '@ui/plugins';
 import { UiPluginHoles } from '@ui/plugins/atoms/ui-plugin-hole/ui-plugin-holes';
 import { timestampDate } from '@ui/utils/connectrpc-utils';
@@ -37,10 +37,9 @@ const rollbackAnnotationKey = 'kargo.akuity.io/rollback';
 
 type PromotionsProps = {
   argocdShard?: ArgoCDShard;
-  stage?: Stage;
 };
 
-export const Promotions = ({ argocdShard, stage }: PromotionsProps) => {
+export const Promotions = ({ argocdShard }: PromotionsProps) => {
   const client = useQueryClient();
   const navigate = useNavigate();
 
@@ -62,15 +61,11 @@ export const Promotions = ({ argocdShard, stage }: PromotionsProps) => {
   );
 
   const onRetryPromotion = (promotion: Promotion) => {
-    const stage = stageName;
-    const project = promotion?.metadata?.namespace;
-    const freight = promotion?.spec?.freight;
-
     navigate(
       generatePath(paths.promote, {
-        name: project || '',
-        freight: freight || '',
-        stage: stage || ''
+        name: promotion?.metadata?.namespace || '',
+        freight: promotion?.spec?.freight || '',
+        stage: stageName || ''
       })
     );
   };
@@ -139,16 +134,6 @@ export const Promotions = ({ argocdShard, stage }: PromotionsProps) => {
     return [...(promotionsResponse?.promotions || [])].sort(promotionCompareFn);
   }, [promotionsResponse]);
 
-  const rollbackPromotionNames = React.useMemo(
-    () =>
-      new Set(
-        Object.values(stage?.status?.autoPromotionHolds || {})
-          .map((hold) => hold?.promotionName)
-          .filter(Boolean)
-      ),
-    [stage?.status?.autoPromotionHolds]
-  );
-
   const columns: ColumnsType<Promotion> = [
     {
       title: '',
@@ -159,8 +144,7 @@ export const Promotions = ({ argocdShard, stage }: PromotionsProps) => {
           hasAbortRequest(promotion) && !isPromotionPhaseTerminal(promotionStatusPhase);
         const canRetry = isPromotionRetryable(promotionStatusPhase);
         const isRollbackPromotion =
-          promotion.metadata?.annotations?.[rollbackAnnotationKey] === 'true' ||
-          rollbackPromotionNames.has(promotion.metadata?.name || '');
+          promotion.metadata?.annotations?.[rollbackAnnotationKey] === 'true';
 
         // generally controller quickly Abort promotion
         // but incase if controller is off for some reason, this messaging ensures accurate information

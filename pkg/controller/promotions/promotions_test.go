@@ -85,8 +85,12 @@ func TestReconcile(t *testing.T) {
 		expectTerminateFnCalled bool
 		expectedPhase           kargoapi.PromotionPhase
 		expectedMessage         string
-		expectedEventRecorded   bool
-		expectedEventType       kargoapi.EventType
+		// expectedAbortReason, if set, is the expected value of the abort-reason
+		// annotation on the reconciled Promotion. When empty, the annotation must
+		// be absent.
+		expectedAbortReason   string
+		expectedEventRecorded bool
+		expectedEventType     kargoapi.EventType
 	}{
 		{
 			name:                  "normal reconcile",
@@ -241,6 +245,9 @@ func TestReconcile(t *testing.T) {
 			promoToReconcile:      &types.NamespacedName{Namespace: "fake-namespace", Name: "fake-promo"},
 			expectedPhase:         kargoapi.PromotionPhaseAborted,
 			expectedMessage:       api.AutoPromotionBlockedByHoldMessage,
+			expectedAbortReason:   kargoapi.AnnotationValueAbortReasonAutoPromotionHold,
+			expectedEventRecorded: true,
+			expectedEventType:     kargoapi.EventTypePromotionAborted,
 			promos: []client.Object{
 				&kargoapi.Stage{
 					ObjectMeta: metav1.ObjectMeta{
@@ -251,12 +258,7 @@ func TestReconcile(t *testing.T) {
 						CurrentPromotion: &kargoapi.PromotionReference{
 							Name: "fake-promo",
 						},
-						AutoPromotionHolds: map[string]kargoapi.AutoPromotionHold{
-							"Warehouse/fake-warehouse": {
-								FreightName: "older-freight",
-								State:       kargoapi.AutoPromotionHoldStateActive,
-							},
-						},
+						AutoPromotionHolds: holdOnFakeWarehouse(),
 					},
 				},
 				&kargoapi.Freight{
@@ -269,12 +271,7 @@ func TestReconcile(t *testing.T) {
 						Name: "fake-warehouse",
 					},
 				},
-				func() *kargoapi.Promotion {
-					promo := newPromo("fake-namespace", "fake-promo", "fake-stage", kargoapi.PromotionPhasePending, now)
-					promo.Spec.Freight = "fake-freight"
-					promo.Spec.Source = kargoapi.PromotionSourceAuto
-					return promo
-				}(),
+				newAutoPromo("fake-namespace", "fake-promo", "fake-stage", "fake-freight"),
 			},
 		},
 		{
@@ -283,6 +280,9 @@ func TestReconcile(t *testing.T) {
 			promoToReconcile:      &types.NamespacedName{Namespace: "fake-namespace", Name: "fake-promo"},
 			expectedPhase:         kargoapi.PromotionPhaseAborted,
 			expectedMessage:       api.AutoPromotionBlockedByHoldMessage,
+			expectedAbortReason:   kargoapi.AnnotationValueAbortReasonAutoPromotionHold,
+			expectedEventRecorded: true,
+			expectedEventType:     kargoapi.EventTypePromotionAborted,
 			promos: []client.Object{
 				&kargoapi.Stage{
 					ObjectMeta: metav1.ObjectMeta{
@@ -305,40 +305,22 @@ func TestReconcile(t *testing.T) {
 						Name: "fake-warehouse",
 					},
 				},
-				func() *kargoapi.Promotion {
-					promo := newPromo("fake-namespace", "fake-promo", "fake-stage", kargoapi.PromotionPhasePending, now)
-					promo.Spec.Freight = "fake-freight"
-					promo.Spec.Source = kargoapi.PromotionSourceAuto
-					return promo
-				}(),
+				newAutoPromo("fake-namespace", "fake-promo", "fake-stage", "fake-freight"),
 			},
 			apiReader: fakeReaderWithObjects(t,
-				func() *kargoapi.Stage {
-					stage := &kargoapi.Stage{
-						ObjectMeta: metav1.ObjectMeta{
-							Name:      "fake-stage",
-							Namespace: "fake-namespace",
+				&kargoapi.Stage{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "fake-stage",
+						Namespace: "fake-namespace",
+					},
+					Status: kargoapi.StageStatus{
+						CurrentPromotion: &kargoapi.PromotionReference{
+							Name: "fake-promo",
 						},
-						Status: kargoapi.StageStatus{
-							CurrentPromotion: &kargoapi.PromotionReference{
-								Name: "fake-promo",
-							},
-							AutoPromotionHolds: map[string]kargoapi.AutoPromotionHold{
-								"Warehouse/fake-warehouse": {
-									FreightName: "older-freight",
-									State:       kargoapi.AutoPromotionHoldStateActive,
-								},
-							},
-						},
-					}
-					return stage
-				}(),
-				func() *kargoapi.Promotion {
-					promo := newPromo("fake-namespace", "fake-promo", "fake-stage", kargoapi.PromotionPhasePending, now)
-					promo.Spec.Freight = "fake-freight"
-					promo.Spec.Source = kargoapi.PromotionSourceAuto
-					return promo
-				}(),
+						AutoPromotionHolds: holdOnFakeWarehouse(),
+					},
+				},
+				newAutoPromo("fake-namespace", "fake-promo", "fake-stage", "fake-freight"),
 			),
 		},
 		{
@@ -347,6 +329,9 @@ func TestReconcile(t *testing.T) {
 			promoToReconcile:      &types.NamespacedName{Namespace: "fake-namespace", Name: "fake-promo"},
 			expectedPhase:         kargoapi.PromotionPhaseAborted,
 			expectedMessage:       api.AutoPromotionBlockedByHoldMessage,
+			expectedAbortReason:   kargoapi.AnnotationValueAbortReasonAutoPromotionHold,
+			expectedEventRecorded: true,
+			expectedEventType:     kargoapi.EventTypePromotionAborted,
 			promos: []client.Object{
 				&kargoapi.Stage{
 					ObjectMeta: metav1.ObjectMeta{
@@ -369,12 +354,7 @@ func TestReconcile(t *testing.T) {
 						Name: "fake-warehouse",
 					},
 				},
-				func() *kargoapi.Promotion {
-					promo := newPromo("fake-namespace", "fake-promo", "fake-stage", kargoapi.PromotionPhasePending, now)
-					promo.Spec.Freight = "fake-freight"
-					promo.Spec.Source = kargoapi.PromotionSourceAuto
-					return promo
-				}(),
+				newAutoPromo("fake-namespace", "fake-promo", "fake-stage", "fake-freight"),
 			},
 			configure: func(t *testing.T, r *reconciler) {
 				r.apiReader = stageSequenceReader(t,
@@ -394,13 +374,8 @@ func TestReconcile(t *testing.T) {
 							Namespace: "fake-namespace",
 						},
 						Status: kargoapi.StageStatus{
-							CurrentPromotion: &kargoapi.PromotionReference{Name: "fake-promo"},
-							AutoPromotionHolds: map[string]kargoapi.AutoPromotionHold{
-								"Warehouse/fake-warehouse": {
-									FreightName: "older-freight",
-									State:       kargoapi.AutoPromotionHoldStateActive,
-								},
-							},
+							CurrentPromotion:   &kargoapi.PromotionReference{Name: "fake-promo"},
+							AutoPromotionHolds: holdOnFakeWarehouse(),
 						},
 					},
 				)
@@ -425,12 +400,7 @@ func TestReconcile(t *testing.T) {
 						},
 					},
 				},
-				func() *kargoapi.Promotion {
-					promo := newPromo("fake-namespace", "fake-promo", "fake-stage", kargoapi.PromotionPhasePending, now)
-					promo.Spec.Freight = "missing-freight"
-					promo.Spec.Source = kargoapi.PromotionSourceAuto
-					return promo
-				}(),
+				newAutoPromo("fake-namespace", "fake-promo", "fake-stage", "missing-freight"),
 			},
 			promoteFn: func(
 				_ context.Context,
@@ -448,6 +418,9 @@ func TestReconcile(t *testing.T) {
 			expectPromoteFnCalled: false,
 			promoToReconcile:      &types.NamespacedName{Namespace: "fake-namespace", Name: "fake-promo"},
 			expectedPhase:         kargoapi.PromotionPhaseAborted,
+			expectedAbortReason:   kargoapi.AnnotationValueAbortReasonAutoPromotionHold,
+			expectedEventRecorded: true,
+			expectedEventType:     kargoapi.EventTypePromotionAborted,
 			promos: []client.Object{
 				&kargoapi.Stage{
 					ObjectMeta: metav1.ObjectMeta{
@@ -458,12 +431,7 @@ func TestReconcile(t *testing.T) {
 						CurrentPromotion: &kargoapi.PromotionReference{Name: "fake-promo"},
 					},
 				},
-				func() *kargoapi.Promotion {
-					promo := newPromo("fake-namespace", "fake-promo", "fake-stage", kargoapi.PromotionPhasePending, now)
-					promo.Spec.Freight = "fake-freight"
-					promo.Spec.Source = kargoapi.PromotionSourceAuto
-					return promo
-				}(),
+				newAutoPromo("fake-namespace", "fake-promo", "fake-stage", "fake-freight"),
 			},
 			apiReader: fakeReaderWithObjects(t,
 				&kargoapi.Stage{
@@ -472,13 +440,8 @@ func TestReconcile(t *testing.T) {
 						Namespace: "fake-namespace",
 					},
 					Status: kargoapi.StageStatus{
-						CurrentPromotion: &kargoapi.PromotionReference{Name: "fake-promo"},
-						AutoPromotionHolds: map[string]kargoapi.AutoPromotionHold{
-							"Warehouse/fake-warehouse": {
-								FreightName: "older-freight",
-								State:       kargoapi.AutoPromotionHoldStateActive,
-							},
-						},
+						CurrentPromotion:   &kargoapi.PromotionReference{Name: "fake-promo"},
+						AutoPromotionHolds: holdOnFakeWarehouse(),
 					},
 				},
 				&kargoapi.Freight{
@@ -491,12 +454,7 @@ func TestReconcile(t *testing.T) {
 						Name: "fake-warehouse",
 					},
 				},
-				func() *kargoapi.Promotion {
-					promo := newPromo("fake-namespace", "fake-promo", "fake-stage", kargoapi.PromotionPhasePending, now)
-					promo.Spec.Freight = "fake-freight"
-					promo.Spec.Source = kargoapi.PromotionSourceAuto
-					return promo
-				}(),
+				newAutoPromo("fake-namespace", "fake-promo", "fake-stage", "fake-freight"),
 			),
 		},
 		{
@@ -713,11 +671,21 @@ func TestReconcile(t *testing.T) {
 				if tc.expectedMessage != "" {
 					require.Equal(t, tc.expectedMessage, updatedPromo.Status.Message)
 				}
+				if tc.expectedAbortReason != "" {
+					require.Equal(
+						t,
+						tc.expectedAbortReason,
+						updatedPromo.Annotations[kargoapi.AnnotationKeyAbortReason],
+					)
+				} else {
+					require.NotContains(t, updatedPromo.Annotations, kargoapi.AnnotationKeyAbortReason)
+				}
 				if tc.expectedEventRecorded {
 					require.Len(t, recorder.Events, 1)
 					event := <-recorder.Events
 					require.Equal(t, tc.expectedEventType, kargoapi.EventType(event.Reason))
 				}
+				require.Empty(t, recorder.Events)
 			}
 		})
 	}
@@ -874,6 +842,7 @@ func Test_reconciler_terminatePromotion(t *testing.T) {
 
 			r := &reconciler{
 				kargoClient: c,
+				apiReader:   c,
 				sender:      k8sevent.NewEventSender(recorder),
 				cleanupWorkDirFn: func(context.Context, types.UID) {
 					// no-op for tests
@@ -1008,6 +977,7 @@ func Test_reconciler_terminatePromotion_cleansUpWorkDir(t *testing.T) {
 	cleanupCalled := false
 	r := &reconciler{
 		kargoClient: c,
+		apiReader:   c,
 		sender:      k8sevent.NewEventSender(recorder),
 		cleanupWorkDirFn: func(context.Context, types.UID) {
 			cleanupCalled = true
@@ -1323,6 +1293,26 @@ func newPromo(namespace, name, stage string,
 		},
 		Status: kargoapi.PromotionStatus{
 			Phase: phase,
+		},
+	}
+}
+
+// newAutoPromo returns a Pending auto-sourced Promotion for the given Freight.
+// nolint: unparam
+func newAutoPromo(namespace, name, stage, freight string) *kargoapi.Promotion {
+	promo := newPromo(namespace, name, stage, kargoapi.PromotionPhasePending, now)
+	promo.Spec.Freight = freight
+	promo.Spec.Source = kargoapi.PromotionSourceAuto
+	return promo
+}
+
+// holdOnFakeWarehouse returns a Stage autoPromotionHolds map containing one
+// Active hold keyed by the fake-warehouse origin.
+func holdOnFakeWarehouse() map[string]kargoapi.AutoPromotionHold {
+	return map[string]kargoapi.AutoPromotionHold{
+		"Warehouse/fake-warehouse": {
+			FreightName: "older-freight",
+			State:       kargoapi.AutoPromotionHoldStateActive,
 		},
 	}
 }

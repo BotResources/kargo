@@ -405,7 +405,7 @@
                 "type": "string"
               },
               "reason": {
-                "description": "Reason is a free-form human-readable explanation of why the hold was\ncreated.",
+                "description": "Reason is a free-form human-readable explanation of why the hold was\ncreated. The MaxLength marker below must match\nAutoPromotionHoldReasonMaxLength.",
                 "maxLength": 1024,
                 "type": "string"
               },

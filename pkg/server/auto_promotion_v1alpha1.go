@@ -9,7 +9,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kargoapi "github.com/akuity/kargo/api/v1alpha1"
@@ -118,10 +117,8 @@ func (s *server) resumeStageAutoPromotion(c *gin.Context) {
 	key := client.ObjectKey{Namespace: project, Name: stageName}
 
 	var req resumeStageAutoPromotionRequest
-	if c.Request.Body != nil && c.Request.ContentLength != 0 {
-		if !bindJSONOrError(c, &req) {
-			return
-		}
+	if !bindJSONOrError(c, &req) {
+		return
 	}
 	if req.Origin == nil || req.Origin.Kind == "" || req.Origin.Name == "" {
 		_ = c.Error(libhttp.ErrorStr(
@@ -130,7 +127,7 @@ func (s *server) resumeStageAutoPromotion(c *gin.Context) {
 		))
 		return
 	}
-	if _, err := kargoapi.ParseFreightOriginKey(req.Origin.String()); err != nil {
+	if err := req.Origin.Validate(); err != nil {
 		_ = c.Error(libhttp.ErrorStr(
 			fmt.Sprintf("invalid origin: %s", err.Error()),
 			http.StatusBadRequest,
@@ -182,18 +179,27 @@ func (s *server) resumeStageAutoPromotion(c *gin.Context) {
 		))
 		return
 	}
-	// State is a validated enum (Pending|Active), so reaching here means Active.
-	// The patch below re-verifies identity against live state, turning any
-	// concurrent change into a 409.
-	expectedHold := hold
-
-	changed, err := s.patchStageAutoPromotionHolds(ctx, key, func(status *kargoapi.StageStatus) bool {
-		return removeAutoPromotionHolds(status, func(origin string, hold kargoapi.AutoPromotionHold) bool {
-			return origin == req.Origin.String() &&
-				hold.State == kargoapi.AutoPromotionHoldStateActive &&
-				api.AutoPromotionHoldIdentityMatches(hold, expectedHold)
-		})
-	})
+	// The patch below re-verifies the hold against live state, turning any
+	// concurrent change into a 409. The internal client performs the status
+	// write because Stage status is controller/API-owned, not directly
+	// user-writable; the caller was authorized above.
+	originKey := req.Origin.String()
+	_, changed, err := api.PatchStageAutoPromotionHolds(
+		ctx,
+		s.client.InternalClient(),
+		s.client.InternalClient(),
+		key,
+		func(status *kargoapi.StageStatus) (bool, error) {
+			live, ok := status.AutoPromotionHolds[originKey]
+			if !ok ||
+				live.State != kargoapi.AutoPromotionHoldStateActive ||
+				!api.AutoPromotionHoldIdentityMatches(live, hold) {
+				return false, nil
+			}
+			status.DeleteAutoPromotionHold(originKey)
+			return true, nil
+		},
+	)
 	if err != nil {
 		_ = c.Error(fmt.Errorf("clear auto-promotion holds: %w", err))
 		return
@@ -248,59 +254,36 @@ func (s *server) getAutoPromotionCandidate(
 	if err != nil {
 		return nil, err
 	}
-	candidate := candidates[origin.String()]
-	if candidate == nil {
-		return nil, nil
+	if candidate, ok := candidates[origin.String()]; ok {
+		return &candidate, nil
 	}
-	return candidate.DeepCopy(), nil
+	return nil, nil
 }
 
 func (s *server) getAutoPromotionCandidates(
 	ctx context.Context,
 	stage *kargoapi.Stage,
-) (map[string]*kargoapi.Freight, error) {
-	if s.isAutoPromotionEnabledFn == nil && s.client == nil {
-		return map[string]*kargoapi.Freight{}, nil
-	}
-	isAutoPromotionEnabledFn := s.isAutoPromotionEnabledFn
-	if isAutoPromotionEnabledFn == nil {
-		isAutoPromotionEnabledFn = api.IsAutoPromotionEnabled
-	}
-	autoPromotionClient := client.Client(s.client)
-	if s.client != nil {
-		// Candidate calculation is a mechanical Stage-level decision. Endpoint
-		// handlers authorize the user before reaching this path, then use the
-		// internal client so promote permissions do not also require unrelated
-		// ProjectConfig, Warehouse, and Freight read permissions.
-		autoPromotionClient = s.client.InternalClient()
-	}
-	enabled, err := isAutoPromotionEnabledFn(ctx, autoPromotionClient, stage.ObjectMeta)
+) (map[string]kargoapi.Freight, error) {
+	// Candidate calculation is a mechanical Stage-level decision. Endpoint
+	// handlers authorize the user before reaching this path, then use the
+	// internal client so promote permissions do not also require unrelated
+	// ProjectConfig, Warehouse, and Freight read permissions.
+	enabled, err := s.isAutoPromotionEnabledFn(ctx, s.client.InternalClient(), stage.ObjectMeta)
 	if err != nil {
 		return nil, fmt.Errorf("check auto-promotion enablement: %w", err)
 	}
 	if !enabled {
-		return map[string]*kargoapi.Freight{}, nil
+		return nil, nil
 	}
 
-	getAvailableFreightForStageFn := s.getAutoPromotionAvailableFreightForStageFn
-	if getAvailableFreightForStageFn == nil && s.client != nil {
-		getAvailableFreightForStageFn = s.getAutoPromotionAvailableFreightForStage
-	}
-	if getAvailableFreightForStageFn == nil {
-		return map[string]*kargoapi.Freight{}, nil
-	}
-	availableFreight, err := getAvailableFreightForStageFn(ctx, stage)
+	availableFreight, err := s.getAutoPromotionAvailableFreightForStageFn(ctx, stage)
 	if err != nil {
 		return nil, fmt.Errorf("get available Freight for Stage: %w", err)
 	}
 
-	selected, err := api.SelectAutoPromotionCandidates(stage, availableFreight)
+	candidates, err := api.SelectAutoPromotionCandidates(stage, availableFreight)
 	if err != nil {
 		return nil, fmt.Errorf("select auto-promotion candidates: %w", err)
-	}
-	candidates := make(map[string]*kargoapi.Freight)
-	for origin, freight := range selected {
-		candidates[origin] = freight.DeepCopy()
 	}
 	return candidates, nil
 }
@@ -310,53 +293,6 @@ func (s *server) getAutoPromotionAvailableFreightForStage(
 	stage *kargoapi.Stage,
 ) ([]kargoapi.Freight, error) {
 	return api.ListFreightAvailableToStage(ctx, s.client.InternalClient(), stage)
-}
-
-// patchStageAutoPromotionHolds mutates Stage status with optimistic locking,
-// re-running mutate against each fresh snapshot because the caller's
-// preconditions must be re-checked after every conflict retry. The internal
-// client performs the write because Stage status is controller/API-owned, not
-// directly user-writable; callers authorize the request beforehand.
-func (s *server) patchStageAutoPromotionHolds(
-	ctx context.Context,
-	key client.ObjectKey,
-	mutate func(*kargoapi.StageStatus) bool,
-) (bool, error) {
-	var changed bool
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		stage := &kargoapi.Stage{}
-		if err := s.client.InternalClient().Get(ctx, key, stage); err != nil {
-			return err
-		}
-		original := stage.DeepCopy()
-		if changed = mutate(&stage.Status); !changed {
-			return nil
-		}
-		return s.client.InternalClient().Status().Patch(
-			ctx,
-			stage,
-			client.MergeFromWithOptions(original, client.MergeFromWithOptimisticLock{}),
-		)
-	})
-	return changed, err
-}
-
-func removeAutoPromotionHolds(
-	status *kargoapi.StageStatus,
-	shouldRemove func(string, kargoapi.AutoPromotionHold) bool,
-) bool {
-	var changed bool
-	for origin, hold := range status.AutoPromotionHolds {
-		if shouldRemove(origin, hold) {
-			changed = true
-			delete(status.AutoPromotionHolds, origin)
-			continue
-		}
-	}
-	if len(status.AutoPromotionHolds) == 0 {
-		status.AutoPromotionHolds = nil
-	}
-	return changed
 }
 
 func autoPromotionHoldActor(ctx context.Context) string {

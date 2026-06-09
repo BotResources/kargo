@@ -27,7 +27,8 @@ with this hold, when applicable. */
 prevent an older failed rollback from clearing a newer hold. */
   promotionUID?: string;
   /** Reason is a free-form human-readable explanation of why the hold was
-created.
+created. The MaxLength marker below must match
+AutoPromotionHoldReasonMaxLength.
 +kubebuilder:validation:MaxLength=1024 */
   reason?: string;
   /** State is the current lifecycle state of the hold.

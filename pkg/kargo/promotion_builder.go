@@ -37,6 +37,7 @@ const (
 
 type PromotionBuilder struct {
 	client client.Client
+	source kargoapi.PromotionSource
 }
 
 // NewPromotionBuilder creates a new PromotionBuilder with the given client.
@@ -44,6 +45,13 @@ func NewPromotionBuilder(c client.Client) *PromotionBuilder {
 	return &PromotionBuilder{
 		client: c,
 	}
+}
+
+// WithSource sets the Source recorded on Promotions built by this builder.
+// When not called, Build defaults the Source to PromotionSourceNonAuto.
+func (b *PromotionBuilder) WithSource(s kargoapi.PromotionSource) *PromotionBuilder {
+	b.source = s
+	return b
 }
 
 // Build creates a new Promotion for the Freight based on the PromotionTemplate
@@ -76,6 +84,11 @@ func (b *PromotionBuilder) Build(
 	vars = append(vars, stage.Spec.Vars...)
 	vars = append(vars, stage.Spec.PromotionTemplate.Spec.Vars...)
 
+	source := b.source
+	if source == "" {
+		source = kargoapi.PromotionSourceNonAuto
+	}
+
 	promotion := kargoapi.Promotion{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        generatePromotionName(stage.Name, freight),
@@ -85,7 +98,7 @@ func (b *PromotionBuilder) Build(
 		Spec: kargoapi.PromotionSpec{
 			Stage:   stage.Name,
 			Freight: freight,
-			Source:  kargoapi.PromotionSourceNonAuto,
+			Source:  source,
 			Vars:    vars,
 			Steps:   stage.Spec.PromotionTemplate.Spec.Steps,
 		},

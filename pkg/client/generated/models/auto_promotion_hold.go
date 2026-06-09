@@ -45,7 +45,8 @@ type AutoPromotionHold struct {
 	PromotionUID string `json:"promotionUID,omitempty"`
 
 	// Reason is a free-form human-readable explanation of why the hold was
-	// created.
+	// created. The MaxLength marker below must match
+	// AutoPromotionHoldReasonMaxLength.
 	// +kubebuilder:validation:MaxLength=1024
 	Reason string `json:"reason,omitempty"`
 

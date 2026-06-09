@@ -25,6 +25,7 @@ import (
 	rbacapi "github.com/akuity/kargo/api/rbac/v1alpha1"
 	rollouts "github.com/akuity/kargo/api/stubs/rollouts/v1alpha1"
 	kargoapi "github.com/akuity/kargo/api/v1alpha1"
+	"github.com/akuity/kargo/pkg/api"
 	"github.com/akuity/kargo/pkg/server/config"
 	"github.com/akuity/kargo/pkg/server/kubernetes"
 	"github.com/akuity/kargo/pkg/server/rbac"
@@ -119,6 +120,10 @@ func testRESTEndpoint(
 				s.client,
 				rbac.RolesDatabaseConfig{KargoNamespace: testKargoNamespace},
 			)
+			// Mirror the Fn wiring NewServer performs; serverSetup may override.
+			s.createPromotionFn = s.client.Create
+			s.isAutoPromotionEnabledFn = api.IsAutoPromotionEnabled
+			s.getAutoPromotionAvailableFreightForStageFn = s.getAutoPromotionAvailableFreightForStage
 
 			if testCase.serverSetup != nil {
 				testCase.serverSetup(t, s)

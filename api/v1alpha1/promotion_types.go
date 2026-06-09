@@ -13,14 +13,16 @@ const (
 	// PromotionSourceNonAuto denotes a Promotion created outside the Stage
 	// controller's normal auto-promotion loop. It does not necessarily mean a
 	// human created the Promotion.
-	PromotionSourceNonAuto PromotionSource = "nonAuto"
+	PromotionSourceNonAuto PromotionSource = "NonAuto"
 	// PromotionSourceAuto denotes a Promotion created by Kargo's Stage
 	// controller while processing normal auto-promotion.
-	PromotionSourceAuto PromotionSource = "auto"
+	PromotionSourceAuto PromotionSource = "Auto"
 )
 
-// PromotionSource identifies the actor path that created a Promotion.
-// +kubebuilder:validation:Enum=nonAuto;auto
+// PromotionSource describes the system path that created a Promotion. An
+// empty value, possible only on Promotions created before this field existed,
+// is treated the same as NonAuto.
+// +kubebuilder:validation:Enum=NonAuto;Auto
 type PromotionSource string
 
 const (
@@ -194,7 +196,9 @@ type PromotionSpec struct {
 	Freight string `json:"freight" protobuf:"bytes,2,opt,name=freight"`
 	// Source describes the system path that created this Promotion. The value is
 	// immutable and is used by controllers to distinguish normal auto-promotion
-	// from user-directed promotion requests.
+	// from user-directed promotion requests. An empty value, possible only on
+	// Promotions created before this field existed, is treated the same as
+	// NonAuto.
 	Source PromotionSource `json:"source,omitempty" protobuf:"bytes,5,opt,name=source" swaggertype:"string"`
 	// Vars is a list of variables that can be referenced by expressions in
 	// promotion steps.

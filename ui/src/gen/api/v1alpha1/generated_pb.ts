@@ -455,7 +455,8 @@ export type AutoPromotionHold = Message<"github.com.akuity.kargo.api.v1alpha1.Au
 
   /**
    * Reason is a free-form human-readable explanation of why the hold was
-   * created.
+   * created. The MaxLength marker below must match
+   * AutoPromotionHoldReasonMaxLength.
    * +kubebuilder:validation:MaxLength=1024
    *
    * @generated from field: optional string reason = 6;
@@ -3303,7 +3304,9 @@ export type PromotionSpec = Message<"github.com.akuity.kargo.api.v1alpha1.Promot
   /**
    * Source describes the system path that created this Promotion. The value is
    * immutable and is used by controllers to distinguish normal auto-promotion
-   * from user-directed promotion requests.
+   * from user-directed promotion requests. An empty value, possible only on
+   * Promotions created before this field existed, is treated the same as
+   * NonAuto.
    *
    * @generated from field: optional string source = 5;
    */

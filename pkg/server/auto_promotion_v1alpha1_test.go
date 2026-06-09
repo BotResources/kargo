@@ -158,10 +158,7 @@ func Test_server_getStageAutoPromotionCandidates(t *testing.T) {
 						cfg.Spec.PromotionPolicies[0].AutoPromotionEnabled = false
 						return cfg
 					}(),
-					func() *kargoapi.Stage {
-						disabledStage := stage.DeepCopy()
-						return disabledStage
-					}(),
+					stage.DeepCopy(),
 					warehouse,
 					oldFreight,
 					newFreight,
@@ -263,13 +260,25 @@ func Test_server_resumeStageAutoPromotion(t *testing.T) {
 				},
 			},
 			{
-				name: "origin is required",
+				name: "request body is required",
 				clientBuilder: fake.NewClientBuilder().
 					WithObjects(project, stageWithHold).
 					WithStatusSubresource(stageWithHold),
 				serverSetup: authorizeAllStagesPromote,
 				assertions: func(t *testing.T, w *httptest.ResponseRecorder, _ client.Client) {
 					require.Equal(t, http.StatusBadRequest, w.Code)
+				},
+			},
+			{
+				name: "origin is required",
+				clientBuilder: fake.NewClientBuilder().
+					WithObjects(project, stageWithHold).
+					WithStatusSubresource(stageWithHold),
+				serverSetup: authorizeAllStagesPromote,
+				body:        mustJSONBody(resumeStageAutoPromotionRequest{}),
+				assertions: func(t *testing.T, w *httptest.ResponseRecorder, _ client.Client) {
+					require.Equal(t, http.StatusBadRequest, w.Code)
+					require.Contains(t, w.Body.String(), "origin kind and name are required")
 				},
 			},
 			{
@@ -286,6 +295,99 @@ func Test_server_resumeStageAutoPromotion(t *testing.T) {
 				}),
 				assertions: func(t *testing.T, w *httptest.ResponseRecorder, _ client.Client) {
 					require.Equal(t, http.StatusBadRequest, w.Code)
+				},
+			},
+			{
+				name:          "Stage not found",
+				clientBuilder: fake.NewClientBuilder().WithObjects(project),
+				serverSetup:   authorizeAllStagesPromote,
+				body: mustJSONBody(resumeStageAutoPromotionRequest{
+					Origin: &origin,
+				}),
+				assertions: func(t *testing.T, w *httptest.ResponseRecorder, _ client.Client) {
+					require.Equal(t, http.StatusNotFound, w.Code)
+					require.Contains(t, w.Body.String(), "not found in project")
+				},
+			},
+			{
+				name: "no hold for requested origin",
+				clientBuilder: fake.NewClientBuilder().
+					WithObjects(
+						project,
+						func() *kargoapi.Stage {
+							stage := stageWithHold.DeepCopy()
+							stage.Status.AutoPromotionHolds = map[string]kargoapi.AutoPromotionHold{
+								otherOrigin.String(): {
+									FreightName: "other-freight",
+									Origin:      otherOrigin,
+									State:       kargoapi.AutoPromotionHoldStateActive,
+								},
+							}
+							return stage
+						}(),
+					).
+					WithStatusSubresource(stageWithHold),
+				serverSetup: authorizeAllStagesPromote,
+				body: mustJSONBody(resumeStageAutoPromotionRequest{
+					Origin: &origin,
+				}),
+				assertions: func(t *testing.T, w *httptest.ResponseRecorder, _ client.Client) {
+					require.Equal(t, http.StatusNotFound, w.Code)
+					require.Contains(t, w.Body.String(), "no active auto-promotion hold")
+				},
+			},
+			{
+				name: "concurrently changed hold is not cleared",
+				clientBuilder: func() *fake.ClientBuilder {
+					var stageGetCount int
+					return fake.NewClientBuilder().
+						WithObjects(project, stageWithHold).
+						WithStatusSubresource(stageWithHold).
+						WithInterceptorFuncs(interceptor.Funcs{
+							Get: func(
+								ctx context.Context,
+								c client.WithWatch,
+								key client.ObjectKey,
+								obj client.Object,
+								opts ...client.GetOption,
+							) error {
+								if err := c.Get(ctx, key, obj, opts...); err != nil {
+									return err
+								}
+								if stage, ok := obj.(*kargoapi.Stage); ok {
+									stageGetCount++
+									// The second Get is the one inside the patch
+									// loop: simulate the hold's identity changing
+									// between the handler's read and the patch.
+									if stageGetCount == 2 {
+										hold := stage.Status.AutoPromotionHolds[origin.String()]
+										hold.FreightName = "different-freight"
+										stage.Status.AutoPromotionHolds[origin.String()] = hold
+									}
+								}
+								return nil
+							},
+						})
+				}(),
+				serverSetup: authorizeAllStagesPromote,
+				body: mustJSONBody(resumeStageAutoPromotionRequest{
+					Origin: &origin,
+				}),
+				assertions: func(t *testing.T, w *httptest.ResponseRecorder, c client.Client) {
+					require.Equal(t, http.StatusConflict, w.Code)
+					require.Contains(t, w.Body.String(), "auto-promotion hold changed")
+					stage := &kargoapi.Stage{}
+					require.NoError(t, c.Get(
+						t.Context(),
+						client.ObjectKey{Namespace: project.Name, Name: stageWithHold.Name},
+						stage,
+					))
+					require.Contains(t, stage.Status.AutoPromotionHolds, origin.String())
+					require.Equal(
+						t,
+						"old-freight",
+						stage.Status.AutoPromotionHolds[origin.String()].FreightName,
+					)
 				},
 			},
 			{
@@ -381,21 +483,5 @@ func Test_server_resumeStageAutoPromotion(t *testing.T) {
 }
 
 func authorizeAllStagesPromote(t *testing.T, s *server) {
-	s.authorizeFn = func(
-		_ context.Context,
-		verb string,
-		gvr schema.GroupVersionResource,
-		_ string,
-		_ client.ObjectKey,
-	) error {
-		switch verb {
-		case "promote":
-			require.Equal(t, kargoapi.GroupVersion.WithResource("stages"), gvr)
-		case "create":
-			require.Equal(t, kargoapi.GroupVersion.WithResource("promotions"), gvr)
-		default:
-			require.Failf(t, "unexpected authorization", "verb %q", verb)
-		}
-		return nil
-	}
+	s.authorizeFn = authorizeStagesPromoteFn(t)
 }

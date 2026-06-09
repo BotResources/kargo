@@ -59,7 +59,7 @@ metadata:
 spec:
   stage: multi-origin-holds
   freight: ${FREIGHT_V001}
-  source: nonAuto
+  source: NonAuto
   steps:
   - uses: set-metadata
     config:

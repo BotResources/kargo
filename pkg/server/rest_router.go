@@ -319,12 +319,7 @@ func (s *server) handleError(c *gin.Context) {
 		var httpErr *libhttp.HTTPError
 		if ok := errors.As(err, &httpErr); ok {
 			if code := httpErr.Code(); code == http.StatusInternalServerError {
-				logging.LoggerFromContext(c.Request.Context()).
-					Error(err, "internal server error")
-				c.JSON(
-					http.StatusInternalServerError,
-					gin.H{"error": "internal server error"},
-				)
+				respondInternalServerError(c, err)
 				return
 			}
 			c.JSON(httpErr.Code(), gin.H{"error": httpErr.Error()})
@@ -335,11 +330,17 @@ func (s *server) handleError(c *gin.Context) {
 			c.JSON(int(statusErr.Status().Code), gin.H{"error": err.Error()})
 			return
 		}
-		logging.LoggerFromContext(c.Request.Context()).
-			Error(err, "internal server error")
-		c.JSON(
-			http.StatusInternalServerError,
-			gin.H{"error": "internal server error"},
-		)
+		respondInternalServerError(c, err)
 	}
+}
+
+// respondInternalServerError logs err and responds with a generic 500 that
+// does not leak the underlying error to the client.
+func respondInternalServerError(c *gin.Context, err error) {
+	logging.LoggerFromContext(c.Request.Context()).
+		Error(err, "internal server error")
+	c.JSON(
+		http.StatusInternalServerError,
+		gin.H{"error": "internal server error"},
+	)
 }

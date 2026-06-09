@@ -6617,7 +6617,7 @@
           "type": "string"
         },
         "reason": {
-          "description": "Reason is a free-form human-readable explanation of why the hold was\ncreated.\n+kubebuilder:validation:MaxLength=1024",
+          "description": "Reason is a free-form human-readable explanation of why the hold was\ncreated. The MaxLength marker below must match\nAutoPromotionHoldReasonMaxLength.\n+kubebuilder:validation:MaxLength=1024",
           "type": "string"
         },
         "state": {
@@ -7922,7 +7922,7 @@
           "type": "string"
         },
         "source": {
-          "description": "Source describes the system path that created this Promotion. The value is\nimmutable and is used by controllers to distinguish normal auto-promotion\nfrom user-directed promotion requests.",
+          "description": "Source describes the system path that created this Promotion. The value is\nimmutable and is used by controllers to distinguish normal auto-promotion\nfrom user-directed promotion requests. An empty value, possible only on\nPromotions created before this field existed, is treated the same as\nNonAuto.",
           "type": "string"
         },
         "stage": {

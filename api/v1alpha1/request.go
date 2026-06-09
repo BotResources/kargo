@@ -1,6 +1,10 @@
 package v1alpha1
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
 
 // AbortAction is an action to take on a Promotion to abort it.
 type AbortAction string
@@ -105,6 +109,40 @@ func (r *VerificationRequest) ForID(id string) bool {
 // or an empty string if the VerificationRequest is nil or has an empty ID.
 func (r *VerificationRequest) String() string {
 	if r == nil || r.ID == "" {
+		return ""
+	}
+	b, _ := json.Marshal(r)
+	if b == nil {
+		return ""
+	}
+	return string(b)
+}
+
+// ClearAutoPromotionHoldRequest is a request payload that snapshots the
+// identity of the auto-promotion hold a user-directed Promotion intends to
+// clear when it succeeds. It is used to annotate a Promotion using the
+// AnnotationKeyClearAutoPromotionHold annotation.
+//
+// +protobuf=false
+// +k8s:deepcopy-gen=false
+// +k8s:openapi-gen=false
+type ClearAutoPromotionHoldRequest struct {
+	// Origin identifies the FreightOrigin the hold applies to.
+	Origin FreightOrigin `json:"origin"`
+	// PromotionName is the name of the rollback Promotion recorded on the
+	// hold.
+	PromotionName string `json:"promotionName"`
+	// PromotionUID is the UID of the rollback Promotion recorded on the hold.
+	PromotionUID string `json:"promotionUID,omitempty"`
+	// CreatedAt is the creation time recorded on the hold.
+	CreatedAt *metav1.Time `json:"createdAt,omitempty"`
+}
+
+// String returns the JSON string representation of the
+// ClearAutoPromotionHoldRequest, or an empty string if the
+// ClearAutoPromotionHoldRequest is nil or has an empty PromotionName.
+func (r *ClearAutoPromotionHoldRequest) String() string {
+	if r == nil || r.PromotionName == "" {
 		return ""
 	}
 	b, _ := json.Marshal(r)
