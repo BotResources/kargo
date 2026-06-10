@@ -1,0 +1,172 @@
+name: br-sync
+
+# Keeps the br fork up to date with upstream (akuity/kargo) releases.
+#
+# On a schedule, finds the latest upstream release tag vX.Y.Z. If no vX.Y.Z-br
+# tag exists yet, rebases the br patch set (the commits on br/main on top of
+# the previous release tag) onto vX.Y.Z, verifies it, force-pushes br/main,
+# tags vX.Y.Z-br, and dispatches br-release to build and publish artifacts.
+# If the rebase or verification fails, it opens an issue with instructions so
+# an agent (or human) can finish the job.
+#
+# See .github/BR_FORK.md for the full picture.
+
+on:
+  schedule:
+  - cron: '17 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency: br-sync
+
+env:
+  UPSTREAM: akuity/kargo
+
+jobs:
+  sync:
+    if: github.repository != 'akuity/kargo'
+    permissions:
+      contents: write # Used to push br/main and the new tag
+      issues: write # Used to open an issue on failure
+      actions: write # Used to dispatch br-release
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+    - name: Checkout br/main
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        ref: br/main
+        fetch-depth: 0
+    - name: Determine versions
+      id: versions
+      run: |
+        set -euo pipefail
+        LATEST=$(gh api "repos/${UPSTREAM}/releases/latest" --jq .tag_name)
+        echo "Latest upstream release: ${LATEST}"
+        CURRENT_BR=$(git tag -l 'v*-br' --sort=-v:refname | head -n 1)
+        if [ -z "${CURRENT_BR}" ]
+        then
+          echo "No v*-br tag found; the fork must be bootstrapped manually"
+          exit 1
+        fi
+        BASE="${CURRENT_BR%-br}"
+        echo "Current br base: ${BASE}"
+        SKIP=false
+        if git rev-parse -q --verify "refs/tags/${LATEST}-br" > /dev/null
+        then
+          echo "${LATEST}-br already exists; nothing to do"
+          SKIP=true
+        elif [ "$(printf '%s\n%s\n' "${BASE}" "${LATEST}" | sort -V | tail -n 1)" != "${LATEST}" ]
+        then
+          echo "Latest upstream release ${LATEST} is older than current base ${BASE}; skipping"
+          SKIP=true
+        fi
+        {
+          echo "latest=${LATEST}"
+          echo "base=${BASE}"
+          echo "skip=${SKIP}"
+        } >> "$GITHUB_OUTPUT"
+    - name: Rebase br patch set onto new release
+      id: rebase
+      if: steps.versions.outputs.skip != 'true'
+      env:
+        LATEST: ${{ steps.versions.outputs.latest }}
+        BASE: ${{ steps.versions.outputs.base }}
+      run: |
+        set -euo pipefail
+        git config user.name 'br-sync[bot]'
+        git config user.email 'br-sync[bot]@users.noreply.github.com'
+        git remote add upstream "https://github.com/${UPSTREAM}.git"
+        git fetch --no-tags upstream \
+          "+refs/tags/${BASE}:refs/tags/${BASE}" \
+          "+refs/tags/${LATEST}:refs/tags/${LATEST}"
+        if ! git rebase --onto "${LATEST}" "${BASE}" br/main
+        then
+          {
+            echo 'conflicts<<CONFLICTS_EOF'
+            git status --porcelain || true
+            echo 'CONFLICTS_EOF'
+          } >> "$GITHUB_OUTPUT"
+          git rebase --abort
+          exit 1
+        fi
+    - name: Install pnpm
+      if: steps.versions.outputs.skip != 'true'
+      uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      with:
+        package_json_file: ui/package.json
+    - name: Install nodejs
+      if: steps.versions.outputs.skip != 'true'
+      uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+      with:
+        node-version: '24.7.0'
+    - name: Verify rebased UI
+      if: steps.versions.outputs.skip != 'true'
+      working-directory: ./ui
+      run: |
+        set -euo pipefail
+        pnpm install
+        pnpm typecheck
+        pnpm vitest run src/features/project/pipelines/freight/freight-changed-utils.test.ts
+    - name: Push and release
+      if: steps.versions.outputs.skip != 'true'
+      env:
+        LATEST: ${{ steps.versions.outputs.latest }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        git push --force origin HEAD:refs/heads/br/main
+        git tag "${LATEST}-br"
+        git push origin "refs/tags/${LATEST}-br"
+        gh workflow run br-release.yaml --repo "${REPO}" --ref "refs/tags/${LATEST}-br"
+    - name: Open issue on failure
+      if: failure()
+      env:
+        LATEST: ${{ steps.versions.outputs.latest }}
+        BASE: ${{ steps.versions.outputs.base }}
+        CONFLICTS: ${{ steps.rebase.outputs.conflicts }}
+        REPO: ${{ github.repository }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        set -euo pipefail
+        TITLE="br-sync: failed to create ${LATEST:-unknown}-br"
+        if [ "$(gh issue list --repo "${REPO}" --state open --search "in:title \"${TITLE}\"" --json number --jq length)" != "0" ]
+        then
+          echo "An open issue for this failure already exists"
+          exit 0
+        fi
+        cat > body.md <<EOF
+        Automatic sync with upstream release \`${LATEST:-unknown}\` failed
+        ([failed run](${RUN_URL})).
+
+        The br patch set (commits on \`br/main\` on top of \`${BASE:-unknown}\`) could not be
+        rebased and verified automatically. Conflicting paths, if the failure was a rebase
+        conflict (otherwise see the run logs, e.g. for a typecheck/test failure):
+
+        \`\`\`
+        ${CONFLICTS:-<none — see run logs>}
+        \`\`\`
+
+        ## How to resolve (for an agent or human)
+
+        \`\`\`bash
+        git clone https://github.com/${REPO}.git kargo-br && cd kargo-br
+        git checkout br/main
+        git remote add upstream https://github.com/akuity/kargo.git
+        git fetch upstream --tags
+        git rebase --onto ${LATEST:-<latest>} ${BASE:-<base>} br/main
+        # resolve conflicts, keeping the intent of each br commit, then:
+        # git rebase --continue
+        cd ui && pnpm install && pnpm typecheck && \\
+          pnpm vitest run src/features/project/pipelines/freight/freight-changed-utils.test.ts && cd ..
+        git push --force origin br/main
+        git tag ${LATEST:-<latest>}-br && git push origin refs/tags/${LATEST:-<latest>}-br
+        gh workflow run br-release.yaml --repo ${REPO} --ref refs/tags/${LATEST:-<latest>}-br
+        \`\`\`
+
+        See \`.github/BR_FORK.md\` for background on how this fork is maintained.
+        EOF
+        gh issue create --repo "${REPO}" --title "${TITLE}" --body-file body.md
