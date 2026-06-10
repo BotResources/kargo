@@ -64,6 +64,13 @@ git tag <new-release-tag>-br && git push origin refs/tags/<new-release-tag>-br
 gh workflow run br-release.yaml --repo BotResources/kargo --ref refs/tags/<new-release-tag>-br
 ```
 
+## Keeping the patch set extractable
+
+Never blend feature changes and br-infrastructure changes into the same
+commit on `br/main` (including when resolving rebase conflicts). The feature
+commit must stay cleanly cherry-pickable onto upstream `main` for an eventual
+upstream PR, and droppable if upstream merges an equivalent.
+
 ## Operational notes
 
 - GitHub disables scheduled workflows on forks after 60 days without repo
