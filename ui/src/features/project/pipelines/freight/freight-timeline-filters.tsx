@@ -1,7 +1,13 @@
 import { faDocker, faGitAlt } from '@fortawesome/free-brands-svg-icons';
-import { faAnchor, faFilter, faTimes, IconDefinition } from '@fortawesome/free-solid-svg-icons';
+import {
+  faAnchor,
+  faCodeCompare,
+  faFilter,
+  faTimes,
+  IconDefinition
+} from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { Badge, Button, Checkbox, Select, SelectProps } from 'antd';
+import { Badge, Button, Checkbox, Select, SelectProps, Tooltip } from 'antd';
 import classNames from 'classnames';
 import { useMemo } from 'react';
 
@@ -59,6 +65,24 @@ export const FreightTimelineFilters = (props: FreightTimelineFiltersProps) => {
     return opts;
   }, [props.freights]);
 
+  const highlightChangesButton = (
+    <Tooltip title='Highlight changes since previous freight' placement='right'>
+      <Button
+        size='small'
+        type={props.preferredFilter?.highlightChanges ? 'primary' : 'default'}
+        aria-pressed={props.preferredFilter?.highlightChanges}
+        onClick={() =>
+          props.onPreferredFilterChange({
+            ...props.preferredFilter,
+            highlightChanges: !props.preferredFilter?.highlightChanges
+          })
+        }
+      >
+        <FontAwesomeIcon icon={faCodeCompare} />
+      </Button>
+    </Tooltip>
+  );
+
   return (
     <div className={classNames(props.className)}>
       <span className='text-xs flex items-center gap-2'>
@@ -73,7 +97,16 @@ export const FreightTimelineFilters = (props: FreightTimelineFiltersProps) => {
             <FontAwesomeIcon icon={props.collapsed ? faFilter : faTimes} />
           </Button>
         </Badge>
+
+        {/* expanded: next to the close button; collapsed: below the funnel */}
+        {!props.collapsed && highlightChangesButton}
       </span>
+
+      {props.collapsed && (
+        <span className='flex mt-2'>
+          <span className='ml-auto'>{highlightChangesButton}</span>
+        </span>
+      )}
 
       <div
         className={classNames('transition-all', {

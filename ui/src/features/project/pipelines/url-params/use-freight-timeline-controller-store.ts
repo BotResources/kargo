@@ -17,6 +17,7 @@ export const useFreightTimelineControllerStore = (project: string) => {
       showColors: true,
       warehouses: [],
       hideUnusedFreights: false,
+      highlightChanges: false,
       stackedNodesParents: [],
       hideSubscriptions: {},
       images: false,
@@ -72,6 +73,11 @@ export const useFreightTimelineControllerStore = (project: string) => {
     const hideUnusedFreightsParam = searchParams.get('hideUnusedFreights');
     if (hideUnusedFreightsParam && hideUnusedFreightsParam !== '') {
       filters.hideUnusedFreights = hideUnusedFreightsParam === 'true';
+    }
+
+    const highlightChangesParam = searchParams.get('highlightChanges');
+    if (highlightChangesParam && highlightChangesParam !== '') {
+      filters.highlightChanges = highlightChangesParam === 'true';
     }
 
     const stackedNodesParentsParam = searchParams.getAll('stackedNodesParents');
@@ -131,6 +137,8 @@ export const useFreightTimelineControllerStore = (project: string) => {
         }
 
         currentSearchParams.set('hideUnusedFreights', `${nextPartial.hideUnusedFreights}`);
+
+        currentSearchParams.set('highlightChanges', `${nextPartial.highlightChanges}`);
 
         currentSearchParams.delete('stackedNodesParents');
         if (nextPartial.stackedNodesParents && nextPartial.stackedNodesParents.length > 0) {

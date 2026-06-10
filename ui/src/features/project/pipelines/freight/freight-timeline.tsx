@@ -129,6 +129,35 @@ export const FreightTimeline = (props: { freights: Freight[]; project: string })
     actionContext
   ]);
 
+  // for each freight, the chronologically previous freight from the same
+  // warehouse among the visible (filtered) freight; used to mute artifact
+  // versions that did not change when the highlight-changes option is on
+  const previousFreightByName: Record<string, Freight | undefined> = useMemo(() => {
+    if (!freightTimelineControllerContext.preferredFilter.highlightChanges) {
+      return {};
+    }
+
+    const previousByName: Record<string, Freight | undefined> = {};
+    const lastSeenByOrigin: Record<string, Freight> = {};
+
+    // filteredFreights is sorted newest first; walk from oldest to newest
+    for (let i = filteredFreights.length - 1; i >= 0; i--) {
+      const freight = filteredFreights[i];
+
+      // entries with a count are collapsed-freight placeholder tiles
+      if (freight.count) {
+        continue;
+      }
+
+      const origin = freight?.origin?.name || '';
+
+      previousByName[freight?.metadata?.name || ''] = lastSeenByOrigin[origin];
+      lastSeenByOrigin[origin] = freight;
+    }
+
+    return previousByName;
+  }, [filteredFreights, freightTimelineControllerContext.preferredFilter.highlightChanges]);
+
   const PAGE_SIZE = 20;
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
@@ -248,6 +277,7 @@ export const FreightTimeline = (props: { freights: Freight[]; project: string })
                     dictionaryContext?.freightInStages?.[freight?.metadata?.name || ''] || []
                   }
                   freight={freight}
+                  previousFreight={previousFreightByName[freight?.metadata?.name || '']}
                   preferredFilter={freightTimelineControllerContext.preferredFilter}
                   setViewingFreight={setViewingFreight}
                   viewingFreight={viewingFreight}

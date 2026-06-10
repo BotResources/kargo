@@ -152,6 +152,34 @@ kargo update freight \
 </TabItem>
 </Tabs>
 
+## Highlighting Changes in the Freight Timeline
+
+In pipelines where most artifacts are pinned and only one or two bump per
+discovery cycle, adjacent freight in the timeline can appear nearly identical.
+To see at a glance what actually changed from one piece of freight to the
+next, click the _compare icon_ beneath the _funnel icon_ in the freight
+timeline.
+
+While this option is enabled:
+
+- Artifact versions identical to those in the chronologically previous piece
+  of freight from the same `Warehouse` are de-emphasized.
+
+- Artifact versions that differ are emphasized: each shows the artifact's
+  name with, beneath it, the previous version struck through and the new
+  version.
+
+- Within each artifact type, changed artifacts are listed first, so changes
+  remain visible even when a piece of freight references more artifacts than
+  its tile can display.
+
+:::info
+
+Whether a container image changed is determined by comparing digests, so a
+new digest is highlighted as a change even when its tag is unchanged.
+
+:::
+
 ## Manual Approvals
 
 The [Core Concepts](../10-core-concepts/index.md) describes the

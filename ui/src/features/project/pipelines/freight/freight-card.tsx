@@ -31,10 +31,19 @@ import { useManualApprovalModal } from '../promotion/use-manual-approval-modal';
 
 import { DeleteFreightModal } from './delete-freight-modal';
 import { FreightArtifact } from './freight-artifact';
+import {
+  collectArtifactVersions,
+  FreightArtifactType,
+  isArtifactChanged,
+  previousArtifactVersion
+} from './freight-changed-utils';
 import { useSoakTimeCounter } from './use-soak-time-counter';
 
 type FreightCardProps = {
   freight: Freight;
+  // chronologically previous freight from the same warehouse; when set and
+  // the highlight-changes option is on, unchanged artifact versions are muted
+  previousFreight?: Freight;
   viewingFreight?: Freight | null;
   setViewingFreight?(f: Freight | null): void;
   preferredFilter: FreightTimelineControllerContextType['preferredFilter'];
@@ -72,6 +81,33 @@ export const FreightCard = (props: FreightCardProps) => {
       abs: creationDate
     };
   }, [props.freight]);
+
+  const previousArtifactVersions = useMemo(
+    () =>
+      props.preferredFilter?.highlightChanges && props.previousFreight
+        ? collectArtifactVersions(props.previousFreight)
+        : null,
+    [props.preferredFilter?.highlightChanges, props.previousFreight]
+  );
+
+  const isMuted = (artifact: FreightArtifactType): boolean =>
+    previousArtifactVersions ? !isArtifactChanged(artifact, previousArtifactVersions) : false;
+
+  const previousVersion = (artifact: FreightArtifactType): string | undefined =>
+    previousArtifactVersions
+      ? previousArtifactVersion(artifact, previousArtifactVersions)
+      : undefined;
+
+  // changed artifacts first so they stay visible despite the 2-per-type cap
+  const changedFirst = <T extends FreightArtifactType>(artifacts?: T[]): T[] => {
+    const list = artifacts || [];
+
+    if (!previousArtifactVersions) {
+      return list;
+    }
+
+    return [...list].sort((a, b) => Number(isMuted(a)) - Number(isMuted(b)));
+  };
 
   const noOfGitCommits = props.freight?.commits?.length || 0;
   const noOfHelmReleases = props.freight?.charts?.length || 0;
@@ -279,21 +315,49 @@ export const FreightCard = (props: FreightCardProps) => {
           )}
 
           <div className='flex flex-col gap-1 justify-center items-center'>
-            {props.freight?.commits?.slice(0, 2).map((commit) => (
-              <FreightArtifact key={commit?.repoURL} artifact={commit} />
-            ))}
+            {changedFirst(props.freight?.commits)
+              .slice(0, 2)
+              .map((commit) => (
+                <FreightArtifact
+                  key={commit?.repoURL}
+                  artifact={commit}
+                  muted={isMuted(commit)}
+                  previousVersion={previousVersion(commit)}
+                />
+              ))}
 
-            {props.freight?.charts?.slice(0, 2).map((chart) => (
-              <FreightArtifact key={chart?.repoURL} artifact={chart} />
-            ))}
+            {changedFirst(props.freight?.charts)
+              .slice(0, 2)
+              .map((chart) => (
+                <FreightArtifact
+                  key={chart?.repoURL}
+                  artifact={chart}
+                  muted={isMuted(chart)}
+                  previousVersion={previousVersion(chart)}
+                />
+              ))}
 
-            {props.freight?.images?.slice(0, 2).map((image) => (
-              <FreightArtifact key={image?.repoURL} artifact={image} />
-            ))}
+            {changedFirst(props.freight?.images)
+              .slice(0, 2)
+              .map((image) => (
+                <FreightArtifact
+                  key={image?.repoURL}
+                  artifact={image}
+                  muted={isMuted(image)}
+                  previousVersion={previousVersion(image)}
+                />
+              ))}
 
-            {props.freight?.artifacts?.slice(0, 2).map((other) => (
-              <FreightArtifact key={other?.version} artifact={other} />
-            ))}
+            {changedFirst(props.freight?.artifacts)
+              .slice(0, 2)
+              .map((other) => (
+                <FreightArtifact
+                  key={other?.version}
+                  artifact={other}
+                  muted={isMuted(other)}
+                  previousVersion={previousVersion(other)}
+                />
+              ))}
 
             {noOfGitCommits + noOfHelmReleases + noOfContainerImages > 6 && (
               <Typography.Text type='secondary' className='text-[10px]'>

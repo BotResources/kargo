@@ -14,6 +14,7 @@ export type FreightTimelineControllerContextType = {
     timerange: timerangeTypes;
     warehouses: string[];
     hideUnusedFreights: boolean;
+    highlightChanges: boolean;
     stackedNodesParents: string[];
     hideSubscriptions: Record<string, boolean>;
     images: boolean;

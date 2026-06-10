@@ -1,5 +1,6 @@
 import { Tag } from 'antd';
 import Link from 'antd/es/typography/Link';
+import classNames from 'classnames';
 import { ReactNode } from 'react';
 
 import {
@@ -20,14 +21,32 @@ import { shortVersion } from './short-version-utils';
 type FreightArtifactProps = {
   artifact: GitCommit | Chart | Image | GenericArtifactReference;
   expand?: boolean;
+  // version unchanged from the previous freight; render de-emphasized
+  muted?: boolean;
+  // the previous freight's version of this artifact, when it differs; renders
+  // the diff view: artifact name + previous version struck through + current
+  previousVersion?: string;
 };
 
 export const FreightArtifact = (props: FreightArtifactProps) => {
   const artifactType = props.artifact?.$typeName;
 
+  const mutedProps = props.muted ? { color: 'default' } : {};
+
+  // the diff view stacks the artifact name above the version; center both lines
+  const tagClassName = classNames({
+    'opacity-60': props.muted,
+    'text-center': !!props.previousVersion
+  });
+
+  const Previous: ReactNode = props.previousVersion ? (
+    <span className='line-through opacity-50 mr-1'>{props.previousVersion}</span>
+  ) : null;
+
   if (artifactType === 'github.com.akuity.kargo.api.v1alpha1.ArtifactReference') {
     return (
-      <Tag color='geekblue' bordered={false}>
+      <Tag color='geekblue' bordered={false} {...mutedProps} className={tagClassName}>
+        {Previous}
         {shortVersion(props.artifact.version)}
       </Tag>
     );
@@ -43,6 +62,14 @@ export const FreightArtifact = (props: FreightArtifactProps) => {
     );
   }
 
+  // in the diff view the artifact name sits on its own line above the
+  // old -> new version to save horizontal space
+  const Name: ReactNode = props.previousVersion ? (
+    <div className='text-[10px] leading-3'>
+      {humanComprehendableArtifact(props.artifact.repoURL)}
+    </div>
+  ) : null;
+
   if (artifactType === 'github.com.akuity.kargo.api.v1alpha1.GitCommit') {
     const url = getGitCommitURL(props.artifact.repoURL, props.artifact.id);
 
@@ -52,8 +79,19 @@ export const FreightArtifact = (props: FreightArtifactProps) => {
       : props.artifact.id.slice(0, 7);
 
     const TagComponent = (
-      <Tag title={props.artifact.repoURL} bordered={false} color='geekblue' key={props.artifact.id}>
+      <Tag
+        title={props.artifact.repoURL}
+        bordered={false}
+        color='geekblue'
+        key={props.artifact.id}
+        {...mutedProps}
+        className={tagClassName}
+      >
+        {Name}
+
         <ArtifactIcon artifactType={artifactType} className='mr-1' />
+
+        {Previous}
 
         {displayId}
 
@@ -84,8 +122,14 @@ export const FreightArtifact = (props: FreightArtifactProps) => {
         bordered={false}
         color='geekblue'
         key={props.artifact.repoURL}
+        {...mutedProps}
+        className={tagClassName}
       >
+        {Name}
+
         <ArtifactIcon artifactType={artifactType} className='mr-1' />
+
+        {Previous}
 
         {shortVersion(props.artifact.version)}
 
@@ -106,9 +150,14 @@ export const FreightArtifact = (props: FreightArtifactProps) => {
       bordered={false}
       color='geekblue'
       key={props.artifact?.repoURL}
-      className='hover:cursor-default'
+      {...mutedProps}
+      className={classNames(tagClassName, 'hover:cursor-default')}
     >
+      {Name}
+
       <ArtifactIcon artifactType={artifactType} className='mr-1' />
+
+      {Previous}
 
       {shortVersion(props.artifact?.tag)}
 
