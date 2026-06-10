@@ -10,6 +10,10 @@ name: br-sync
 # an agent (or human) can finish the job.
 #
 # See .github/BR_FORK.md for the full picture.
+#
+# Note: GitHub disables cron triggers on forks after 60 days without repo
+# activity; if syncs stop, re-enable the workflow in the Actions tab or run
+# it manually via workflow_dispatch.
 
 on:
   schedule:
