@@ -1097,7 +1097,7 @@ func Test_server_promoteToStage(t *testing.T) {
 				}),
 				assertions: func(t *testing.T, w *httptest.ResponseRecorder, c client.Client) {
 					require.Equal(t, http.StatusConflict, w.Code)
-					require.Contains(t, w.Body.String(), "auto-promotion is already active")
+					require.Contains(t, w.Body.String(), "an auto-promotion hold is already active")
 
 					promos := &kargoapi.PromotionList{}
 					err := c.List(t.Context(), promos, client.InNamespace(testProject.Name))
@@ -1145,7 +1145,7 @@ func Test_server_promoteToStage(t *testing.T) {
 				}),
 				assertions: func(t *testing.T, w *httptest.ResponseRecorder, c client.Client) {
 					require.Equal(t, http.StatusConflict, w.Code)
-					require.Contains(t, w.Body.String(), "auto-promotion is already pending")
+					require.Contains(t, w.Body.String(), "an auto-promotion hold is already pending")
 
 					promos := &kargoapi.PromotionList{}
 					err := c.List(t.Context(), promos, client.InNamespace(testProject.Name))

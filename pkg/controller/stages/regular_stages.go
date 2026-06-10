@@ -963,7 +963,7 @@ func (r *RegularStageReconciler) syncPendingAutoPromotionHold(
 	hold kargoapi.AutoPromotionHold,
 	promo *kargoapi.Promotion,
 ) error {
-	if _, _, err := api.PatchStageAutoPromotionHolds(
+	if _, err := api.PatchStageAutoPromotionHolds(
 		ctx,
 		r.apiReader,
 		r.client,
@@ -1039,7 +1039,7 @@ func (r *RegularStageReconciler) removeAutoPromotionHoldIfCurrent(
 	origin string,
 	expected kargoapi.AutoPromotionHold,
 ) (bool, error) {
-	_, removed, err := api.PatchStageAutoPromotionHolds(
+	removed, err := api.PatchStageAutoPromotionHolds(
 		ctx,
 		r.apiReader,
 		r.client,

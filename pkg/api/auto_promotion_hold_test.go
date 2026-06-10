@@ -511,7 +511,7 @@ func TestPatchStageAutoPromotionHolds(t *testing.T) {
 		stage       *kargoapi.Stage
 		interceptor interceptor.Funcs
 		mutate      func(*kargoapi.StageStatus) (bool, error)
-		assert      func(*testing.T, client.Client, map[string]kargoapi.AutoPromotionHold, bool, error)
+		assert      func(*testing.T, client.Client, bool, error)
 	}{
 		{
 			name: "missing Stage propagates NotFound",
@@ -521,12 +521,10 @@ func TestPatchStageAutoPromotionHolds(t *testing.T) {
 			assert: func(
 				t *testing.T,
 				_ client.Client,
-				holds map[string]kargoapi.AutoPromotionHold,
 				patched bool,
 				err error,
 			) {
 				require.True(t, apierrors.IsNotFound(err))
-				require.Nil(t, holds)
 				require.False(t, patched)
 			},
 		},
@@ -543,37 +541,41 @@ func TestPatchStageAutoPromotionHolds(t *testing.T) {
 			assert: func(
 				t *testing.T,
 				_ client.Client,
-				holds map[string]kargoapi.AutoPromotionHold,
 				patched bool,
 				err error,
 			) {
 				var exists *AutoPromotionHoldExistsError
 				require.ErrorAs(t, err, &exists)
 				require.Equal(t, kargoapi.AutoPromotionHoldStatePending, exists.State)
-				require.Nil(t, holds)
 				require.False(t, patched)
 			},
 		},
 		{
-			name:  "no change sends no patch and returns current holds",
+			name:  "no change sends no patch",
 			stage: newStage(map[string]kargoapi.AutoPromotionHold{origin.String(): hold}),
 			mutate: func(*kargoapi.StageStatus) (bool, error) {
 				return false, nil
 			},
 			assert: func(
 				t *testing.T,
-				_ client.Client,
-				holds map[string]kargoapi.AutoPromotionHold,
+				c client.Client,
 				patched bool,
 				err error,
 			) {
 				require.NoError(t, err)
 				require.False(t, patched)
-				require.Equal(t, map[string]kargoapi.AutoPromotionHold{origin.String(): hold}, holds)
+
+				liveStage := &kargoapi.Stage{}
+				require.NoError(t, c.Get(context.Background(), stageKey, liveStage))
+				require.Equal(
+					t,
+					map[string]kargoapi.AutoPromotionHold{origin.String(): hold},
+					liveStage.Status.AutoPromotionHolds,
+				)
 			},
 		},
 		{
-			name:  "adds a hold and returns the post-patch holds",
+			name:  "adds a hold",
 			stage: newStage(nil),
 			mutate: func(status *kargoapi.StageStatus) (bool, error) {
 				status.AutoPromotionHolds = map[string]kargoapi.AutoPromotionHold{origin.String(): hold}
@@ -582,17 +584,19 @@ func TestPatchStageAutoPromotionHolds(t *testing.T) {
 			assert: func(
 				t *testing.T,
 				c client.Client,
-				holds map[string]kargoapi.AutoPromotionHold,
 				patched bool,
 				err error,
 			) {
 				require.NoError(t, err)
 				require.True(t, patched)
-				require.Equal(t, map[string]kargoapi.AutoPromotionHold{origin.String(): hold}, holds)
 
 				liveStage := &kargoapi.Stage{}
 				require.NoError(t, c.Get(context.Background(), stageKey, liveStage))
-				require.Equal(t, holds, liveStage.Status.AutoPromotionHolds)
+				require.Equal(
+					t,
+					map[string]kargoapi.AutoPromotionHold{origin.String(): hold},
+					liveStage.Status.AutoPromotionHolds,
+				)
 			},
 		},
 		{
@@ -606,13 +610,11 @@ func TestPatchStageAutoPromotionHolds(t *testing.T) {
 			assert: func(
 				t *testing.T,
 				c client.Client,
-				holds map[string]kargoapi.AutoPromotionHold,
 				patched bool,
 				err error,
 			) {
 				require.NoError(t, err)
 				require.True(t, patched)
-				require.Nil(t, holds)
 
 				liveStage := &kargoapi.Stage{}
 				require.NoError(t, c.Get(context.Background(), stageKey, liveStage))
@@ -651,14 +653,20 @@ func TestPatchStageAutoPromotionHolds(t *testing.T) {
 			},
 			assert: func(
 				t *testing.T,
-				_ client.Client,
-				holds map[string]kargoapi.AutoPromotionHold,
+				c client.Client,
 				patched bool,
 				err error,
 			) {
 				require.NoError(t, err)
 				require.True(t, patched)
-				require.Equal(t, map[string]kargoapi.AutoPromotionHold{origin.String(): hold}, holds)
+
+				liveStage := &kargoapi.Stage{}
+				require.NoError(t, c.Get(context.Background(), stageKey, liveStage))
+				require.Equal(
+					t,
+					map[string]kargoapi.AutoPromotionHold{origin.String(): hold},
+					liveStage.Status.AutoPromotionHolds,
+				)
 			},
 		},
 	}
@@ -673,14 +681,14 @@ func TestPatchStageAutoPromotionHolds(t *testing.T) {
 				builder = builder.WithObjects(testCase.stage)
 			}
 			c := builder.Build()
-			holds, patched, err := PatchStageAutoPromotionHolds(
+			patched, err := PatchStageAutoPromotionHolds(
 				t.Context(),
 				c,
 				c,
 				stageKey,
 				testCase.mutate,
 			)
-			testCase.assert(t, c, holds, patched, err)
+			testCase.assert(t, c, patched, err)
 		})
 	}
 }

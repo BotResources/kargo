@@ -129,7 +129,7 @@ func AutoPromotionHoldIdentityMatches(
 		hold.Origin.Equals(&expected.Origin) &&
 		hold.PromotionName == expected.PromotionName &&
 		hold.PromotionUID == expected.PromotionUID &&
-		AutoPromotionHoldTimesEqual(hold.CreatedAt, expected.CreatedAt)
+		hold.CreatedAt.Equal(expected.CreatedAt)
 }
 
 // AutoPromotionHoldsEqual reports whether two holds are identical in every
@@ -140,19 +140,6 @@ func AutoPromotionHoldsEqual(a, b kargoapi.AutoPromotionHold) bool {
 		a.State == b.State &&
 		a.Actor == b.Actor &&
 		a.Reason == b.Reason
-}
-
-// AutoPromotionHoldTimesEqual reports whether two optional Kubernetes
-// timestamps refer to the same instant, treating two nil values as equal.
-func AutoPromotionHoldTimesEqual(lhs *metav1.Time, rhs *metav1.Time) bool {
-	switch {
-	case lhs == nil && rhs == nil:
-		return true
-	case lhs == nil || rhs == nil:
-		return false
-	default:
-		return lhs.Time.Equal(rhs.Time)
-	}
 }
 
 // SetClearAutoPromotionHoldAnnotation annotates promo with a JSON snapshot of
@@ -212,7 +199,7 @@ func HoldMatchesClearAnnotation(
 	return hold.Origin.Equals(&req.Origin) &&
 		hold.PromotionName == req.PromotionName &&
 		hold.PromotionUID == req.PromotionUID &&
-		AutoPromotionHoldTimesEqual(hold.CreatedAt, req.CreatedAt) &&
+		hold.CreatedAt.Equal(req.CreatedAt) &&
 		(hold.CreatedAt == nil || !promo.CreationTimestamp.Time.Before(hold.CreatedAt.Time))
 }
 
@@ -300,7 +287,7 @@ func CreatePendingAutoPromotionHold(
 
 	// Hold-first. The only precondition checked against live state is that no
 	// hold already exists for this origin; an in-flight rollback owns it.
-	if _, _, err := PatchStageAutoPromotionHolds(
+	if _, err := PatchStageAutoPromotionHolds(
 		ctx,
 		c,
 		c,
@@ -331,7 +318,7 @@ func CreatePendingAutoPromotionHold(
 		// Only roll the hold back when the Promotion definitely did not persist;
 		// otherwise an orphaned hold would block auto-promotion indefinitely.
 		if !promotionCreateMayHavePersisted(err) {
-			if _, _, cleanupErr := PatchStageAutoPromotionHolds(
+			if _, cleanupErr := PatchStageAutoPromotionHolds(
 				ctx,
 				c,
 				c,
@@ -451,19 +438,16 @@ func promotionCreateMayHavePersisted(err error) bool {
 // errors to callers. An empty AutoPromotionHolds map is normalized to nil
 // before patching, relieving mutate of that chore.
 //
-// The returned map contains the Stage's holds as last observed (post-patch
-// when one was sent) and the returned bool reports whether a patch was sent.
+// The returned bool reports whether a patch was sent.
 func PatchStageAutoPromotionHolds(
 	ctx context.Context,
 	reader client.Reader,
-	writer client.Client,
+	writer client.StatusClient,
 	key client.ObjectKey,
 	mutate func(*kargoapi.StageStatus) (bool, error),
-) (map[string]kargoapi.AutoPromotionHold, bool, error) {
-	var holds map[string]kargoapi.AutoPromotionHold
+) (bool, error) {
 	var patched bool
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		holds = nil
 		patched = false
 		stage := &kargoapi.Stage{}
 		if err := reader.Get(ctx, key, stage); err != nil {
@@ -475,7 +459,6 @@ func PatchStageAutoPromotionHolds(
 			return err
 		}
 		if !changed {
-			holds = stage.Status.AutoPromotionHolds
 			return nil
 		}
 		if len(stage.Status.AutoPromotionHolds) == 0 {
@@ -488,11 +471,10 @@ func PatchStageAutoPromotionHolds(
 		); err != nil {
 			return err
 		}
-		holds = stage.Status.AutoPromotionHolds
 		patched = true
 		return nil
 	}); err != nil {
-		return nil, false, err
+		return false, err
 	}
-	return holds, patched, nil
+	return patched, nil
 }

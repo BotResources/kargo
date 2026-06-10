@@ -112,9 +112,10 @@ func (s *server) getStageAutoPromotionCandidates(c *gin.Context) {
 // @Router /v1beta1/projects/{project}/stages/{stage}/auto-promotion/resume [post]
 func (s *server) resumeStageAutoPromotion(c *gin.Context) {
 	ctx := c.Request.Context()
-	project := c.Param("project")
-	stageName := c.Param("stage")
-	key := client.ObjectKey{Namespace: project, Name: stageName}
+	key := client.ObjectKey{
+		Namespace: c.Param("project"),
+		Name:      c.Param("stage"),
+	}
 
 	var req resumeStageAutoPromotionRequest
 	if !bindJSONOrError(c, &req) {
@@ -146,45 +147,57 @@ func (s *server) resumeStageAutoPromotion(c *gin.Context) {
 		return
 	}
 
-	// The custom "promote" verb was authorized above. The internal client lets
-	// users who can promote, but cannot read Stages directly, resume automation.
-	stage := &kargoapi.Stage{}
-	if err := s.client.InternalClient().Get(ctx, key, stage); err != nil {
-		if apierrors.IsNotFound(err) {
-			_ = c.Error(libhttp.ErrorStr(
-				fmt.Sprintf("Stage %q not found in project %q", stageName, project),
-				http.StatusNotFound,
-			))
-			return
-		}
+	if err := s.resumeAutoPromotionForOrigin(ctx, key, *req.Origin); err != nil {
 		_ = c.Error(err)
 		return
 	}
+	c.Status(http.StatusNoContent)
+}
 
-	hold, ok := stage.Status.GetAutoPromotionHold(*req.Origin)
+// resumeAutoPromotionForOrigin clears the Stage's active auto-promotion hold
+// for origin. The caller must already have authorized the custom "promote"
+// verb; reads and writes here use the internal client so users who can
+// promote, but cannot read or patch Stages directly, can still resume
+// automation. Errors that should not surface as a 500 carry their HTTP code
+// via libhttp for the router's error middleware.
+func (s *server) resumeAutoPromotionForOrigin(
+	ctx context.Context,
+	key client.ObjectKey,
+	origin kargoapi.FreightOrigin,
+) error {
+	stage := &kargoapi.Stage{}
+	if err := s.client.InternalClient().Get(ctx, key, stage); err != nil {
+		if apierrors.IsNotFound(err) {
+			return libhttp.ErrorStr(
+				fmt.Sprintf("Stage %q not found in project %q", key.Name, key.Namespace),
+				http.StatusNotFound,
+			)
+		}
+		return err
+	}
+
+	hold, ok := stage.Status.GetAutoPromotionHold(origin)
 	if !ok {
-		_ = c.Error(libhttp.ErrorStr(
+		return libhttp.ErrorStr(
 			"Stage has no active auto-promotion hold for the requested origin",
 			http.StatusNotFound,
-		))
-		return
+		)
 	}
 	if hold.State == kargoapi.AutoPromotionHoldStatePending {
-		_ = c.Error(libhttp.ErrorStr(
+		return libhttp.ErrorStr(
 			fmt.Sprintf(
 				"auto-promotion cannot be resumed while pending hold Promotion %q is still settling",
 				hold.PromotionName,
 			),
 			http.StatusConflict,
-		))
-		return
+		)
 	}
+
 	// The patch below re-verifies the hold against live state, turning any
-	// concurrent change into a 409. The internal client performs the status
-	// write because Stage status is controller/API-owned, not directly
-	// user-writable; the caller was authorized above.
-	originKey := req.Origin.String()
-	_, changed, err := api.PatchStageAutoPromotionHolds(
+	// concurrent change into a 409. Stage status is controller/API-owned, not
+	// directly user-writable.
+	originKey := origin.String()
+	changed, err := api.PatchStageAutoPromotionHolds(
 		ctx,
 		s.client.InternalClient(),
 		s.client.InternalClient(),
@@ -201,27 +214,25 @@ func (s *server) resumeStageAutoPromotion(c *gin.Context) {
 		},
 	)
 	if err != nil {
-		_ = c.Error(fmt.Errorf("clear auto-promotion holds: %w", err))
-		return
+		return fmt.Errorf("clear auto-promotion holds: %w", err)
 	}
 	if !changed {
-		_ = c.Error(libhttp.ErrorStr(
+		return libhttp.ErrorStr(
 			"auto-promotion hold changed; reload and try again",
 			http.StatusConflict,
-		))
-		return
+		)
 	}
-	// The caller was authorized for the custom "promote" verb above.
-	// The internal client performs the mechanical refresh annotation write
-	// because users are not generally allowed to patch Stages.
+
+	// A refresh failure never fails the request; the hold is already cleared
+	// and the refresh only nudges the Stage controller to act sooner.
 	if _, err = api.RefreshStage(ctx, s.client.InternalClient(), key); err != nil {
 		logging.LoggerFromContext(ctx).Error(
 			err,
 			"error refreshing Stage after resuming auto-promotion",
-			"stage", stageName,
+			"stage", key.Name,
 		)
 	}
-	c.Status(http.StatusNoContent)
+	return nil
 }
 
 func (s *server) getRESTStage(

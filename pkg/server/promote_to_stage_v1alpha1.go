@@ -385,9 +385,9 @@ func (s *server) createStagePromotion(
 			var exists *api.AutoPromotionHoldExistsError
 			if errors.As(err, &exists) {
 				return nil, newStagePromotionConflictError(
-					"auto-promotion is already %s for origin %q; wait for the "+
-						"current rollback to settle or resume auto-promotion before "+
-						"creating another rollback",
+					"an auto-promotion hold is already %s for origin %q; wait for "+
+						"the current rollback to settle or resume auto-promotion "+
+						"before creating another rollback",
 					strings.ToLower(string(exists.State)),
 					exists.Origin.String(),
 				)
