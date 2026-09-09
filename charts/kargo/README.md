@@ -7,7 +7,7 @@
 
 | Name                | Description                                                                  | Value                  |
 | ------------------- | ---------------------------------------------------------------------------- | ---------------------- |
-| `image.repository`  | Image repository of Kargo                                                    | `ghcr.io/akuity/kargo` |
+| `image.repository`  | Image repository of Kargo                                                    | `ghcr.io/botresources/kargo` |
 | `image.tag`         | Overrides the image tag. The default tag is the value of `.Chart.AppVersion` | `""`                   |
 | `image.pullPolicy`  | Image pull policy                                                            | `IfNotPresent`         |
 | `image.pullSecrets` | List of imagePullSecrets.                                                    | `[]`                   |
