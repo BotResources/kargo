@@ -152,6 +152,51 @@ kargo update freight \
 </TabItem>
 </Tabs>
 
+## Browsing the Artifacts of a Piece of Freight
+
+Clicking a piece of freight in the freight timeline opens its details, where
+a table lists every artifact it references. The table shows ten artifacts per
+page by default; the selector in its footer offers 5, 10, 20, or 50 per page,
+and the browser remembers the choice for every piece of freight.
+
+## Highlighting Changes in the Freight Timeline
+
+In pipelines where most artifacts are pinned and only one or two bump per
+discovery cycle, adjacent freight in the timeline can appear nearly identical.
+To see at a glance what actually changed from one piece of freight to the
+next, open the freight timeline's filters (the _funnel icon_) and enable
+_Highlight changes_.
+
+While this option is enabled:
+
+- Artifact versions identical to those in the chronologically previous piece
+  of freight from the same `Warehouse` are de-emphasized.
+
+- Artifact versions that differ are emphasized: each shows the artifact's
+  name with, beneath it, the previous version struck through and the new
+  version.
+
+- An artifact absent from the previous piece of freight is shown the same
+  way, but with a _new_ marker in place of the struck-through version, so a
+  newly introduced artifact is distinguishable from a version bump.
+
+- Changed artifacts are listed first, so changes remain visible even when a
+  piece of freight references more artifacts than its tile can display.
+
+:::info
+
+Whether a container image changed is determined by comparing digests, so a
+new digest is highlighted as a change even when its tag is unchanged.
+
+:::
+
+The same comparison is available in a piece of freight's details drawer.
+Toggle _Highlight changes since previous freight_ above the artifacts table:
+the drawer names and links to the piece of freight compared against (the
+previous one from the same `Warehouse` among those the timeline's filters
+leave visible), lists changed and new artifacts first, and appends any
+artifact the previous piece of freight had that this one dropped.
+
 ## Manual Approvals
 
 The [Core Concepts](../10-core-concepts/index.md) describes the
