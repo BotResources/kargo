@@ -34,6 +34,9 @@ import { useSoakTimeCounter } from './use-soak-time-counter';
 
 type FreightCardProps = {
   freight: Freight;
+  // chronologically previous freight from the same warehouse; when set, the
+  // card's artifact versions are compared against it (see FreightArtifactList)
+  previousFreight?: Freight;
   viewingFreight?: Freight | null;
   setViewingFreight?(f: Freight | null): void;
   preferredFilter: FreightTimelineControllerContextType['preferredFilter'];
@@ -286,7 +289,7 @@ export const FreightCard = (props: FreightCardProps) => {
           )}
 
           <div className='flex flex-col gap-1 justify-center items-center min-w-0 max-w-full [&_.ant-tag]:block [&_.ant-tag]:max-w-full [&_.ant-tag]:truncate'>
-            <FreightArtifactList freight={props.freight} />
+            <FreightArtifactList freight={props.freight} previousFreight={props.previousFreight} />
           </div>
 
           <div className='flex flex-col mx-auto w-full gap-0.5 items-center justify-center text-nowrap py-1 mt-auto'>

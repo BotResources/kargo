@@ -6,23 +6,32 @@ import { timerangeTypes } from '@ui/features/project/pipelines/freight/filter-ti
 
 import { getFreightTimelineFiltersLocalStorage } from '../use-persist-filters';
 
+export const defaultPreferredFilter: FreightTimelineControllerContextType['preferredFilter'] = {
+  showAlias: true,
+  sources: [],
+  timerange: 'all-time',
+  showColors: true,
+  warehouses: [],
+  hideUnusedFreights: false,
+  highlightChanges: false,
+  stackedNodesParents: [],
+  hideSubscriptions: {},
+  images: false,
+  view: 'graph',
+  showMinimap: true,
+  stepEdges: false
+};
+
 export const useFreightTimelineControllerStore = (project: string) => {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const filters = useMemo(() => {
     const filters: FreightTimelineControllerContextType['preferredFilter'] = {
-      showAlias: true,
+      ...defaultPreferredFilter,
       sources: [],
-      timerange: 'all-time',
-      showColors: true,
       warehouses: [],
-      hideUnusedFreights: false,
       stackedNodesParents: [],
-      hideSubscriptions: {},
-      images: false,
-      view: 'graph',
-      showMinimap: true,
-      stepEdges: false
+      hideSubscriptions: {}
     };
 
     const hasFilterParams = Object.keys(filters).some((name) => searchParams.has(name));
@@ -78,6 +87,11 @@ export const useFreightTimelineControllerStore = (project: string) => {
     const hideUnusedFreightsParam = searchParams.get('hideUnusedFreights');
     if (hideUnusedFreightsParam && hideUnusedFreightsParam !== '') {
       filters.hideUnusedFreights = hideUnusedFreightsParam === 'true';
+    }
+
+    const highlightChangesParam = searchParams.get('highlightChanges');
+    if (highlightChangesParam && highlightChangesParam !== '') {
+      filters.highlightChanges = highlightChangesParam === 'true';
     }
 
     const stackedNodesParentsParam = searchParams.getAll('stackedNodesParents');
@@ -139,6 +153,8 @@ export const useFreightTimelineControllerStore = (project: string) => {
         }
 
         currentSearchParams.set('hideUnusedFreights', `${nextPartial.hideUnusedFreights}`);
+
+        currentSearchParams.set('highlightChanges', `${nextPartial.highlightChanges}`);
 
         currentSearchParams.delete('stackedNodesParents');
         if (nextPartial.stackedNodesParents && nextPartial.stackedNodesParents.length > 0) {

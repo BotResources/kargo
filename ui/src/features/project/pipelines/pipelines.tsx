@@ -319,7 +319,11 @@ export const Pipelines = (props: { creatingStage?: boolean; creatingWarehouse?: 
               </div>
 
               {!!freightDrawer && (
-                <FreightDetails freight={freightDrawer} refetchFreight={getFreightQuery.refetch} />
+                <FreightDetails
+                  freight={freightDrawer}
+                  freights={freights}
+                  refetchFreight={getFreightQuery.refetch}
+                />
               )}
 
               {!!warehouseDrawer && (

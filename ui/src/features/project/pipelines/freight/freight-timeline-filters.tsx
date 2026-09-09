@@ -1,7 +1,7 @@
 import { faDocker, faGitAlt } from '@fortawesome/free-brands-svg-icons';
 import { faAnchor, IconDefinition } from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { Checkbox, Select, SelectProps } from 'antd';
+import { Checkbox, Select, SelectProps, Tooltip } from 'antd';
 import classNames from 'classnames';
 import { useMemo } from 'react';
 
@@ -86,7 +86,7 @@ export const FreightTimelineFilters = (props: FreightTimelineFiltersProps) => {
         />
       </div>
 
-      <div className='flex mt-3 gap-2'>
+      <div className='flex flex-wrap mt-3 gap-2'>
         <Checkbox
           className='text-xs'
           checked={props.preferredFilter?.showAlias}
@@ -125,6 +125,24 @@ export const FreightTimelineFilters = (props: FreightTimelineFiltersProps) => {
         >
           Hide unused freights
         </Checkbox>
+
+        <Tooltip
+          title='Compare each freight with the previous one from the same warehouse: unchanged artifact versions are de-emphasized, changed ones show the previous version'
+          placement='bottom'
+        >
+          <Checkbox
+            className='text-xs'
+            checked={props.preferredFilter?.highlightChanges}
+            onChange={(e) =>
+              props.onPreferredFilterChange({
+                ...props.preferredFilter,
+                highlightChanges: e.target.checked
+              })
+            }
+          >
+            Highlight changes
+          </Checkbox>
+        </Tooltip>
       </div>
     </div>
   );

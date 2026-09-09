@@ -2,7 +2,7 @@ import { useDndContext } from '@dnd-kit/core';
 import { faChevronLeft, faChevronRight } from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import classNames from 'classnames';
-import { CSSProperties, useContext, useState } from 'react';
+import { CSSProperties, useContext, useMemo, useState } from 'react';
 import { generatePath, useNavigate } from 'react-router-dom';
 
 import { paths } from '@ui/config/paths';
@@ -14,6 +14,7 @@ import { useFreightTimelineControllerContext } from '@ui/features/project/pipeli
 import { Freight } from '@ui/gen/api/v2/models';
 
 import { FreightCard } from './freight-card';
+import { indexPreviousFreight } from './freight-changed-utils';
 import { FreightExpandTile } from './freight-expand-tile';
 import { PromotionModeHeader } from './promotion-mode-header';
 import { useFilteredFreights } from './use-filtered-freights';
@@ -51,6 +52,14 @@ export const FreightTimeline = (props: { freights: Freight[]; project: string })
   const [viewingFreight, setViewingFreight] = useState<Freight | null>(null);
 
   const filteredFreights = useFilteredFreights(props.freights, preferredFilter);
+
+  // for each freight, the chronologically previous freight from the same
+  // warehouse among the visible (filtered) freight; used to mute artifact
+  // versions that did not change when the highlight-changes option is on
+  const previousFreightByName = useMemo(
+    () => (preferredFilter.highlightChanges ? indexPreviousFreight(filteredFreights) : {}),
+    [filteredFreights, preferredFilter.highlightChanges]
+  );
 
   const {
     viewportRef,
@@ -141,6 +150,7 @@ export const FreightTimeline = (props: { freights: Freight[]; project: string })
                     dictionaryContext?.freightInStages?.[freight?.metadata?.name || ''] || []
                   }
                   freight={freight}
+                  previousFreight={previousFreightByName[freight?.metadata?.name || '']}
                   preferredFilter={preferredFilter}
                   setViewingFreight={setViewingFreight}
                   viewingFreight={viewingFreight}
