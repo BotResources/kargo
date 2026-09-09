@@ -57,7 +57,7 @@ const YamlEditor: FC<YamlEditorProps> = (props) => {
       // @ts-expect-error correct schema
       schemas: schema && [
         {
-          uri: `https://raw.githubusercontent.com/akuity/kargo/${__UI_VERSION__ && __UI_VERSION__ !== 'development' ? __UI_VERSION__ : 'main'}/ui/src/gen/schema/${resourceType || 'stages'}.kargo.akuity.io_v1alpha1.json`,
+          uri: `https://raw.githubusercontent.com/BotResources/kargo/${__UI_VERSION__ && __UI_VERSION__ !== 'development' ? __UI_VERSION__ : 'main'}/ui/src/gen/schema/${resourceType || 'stages'}.kargo.akuity.io_v1alpha1.json`,
           fileMatch: ['*'],
           schema
         }
