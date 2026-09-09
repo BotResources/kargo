@@ -1,0 +1,165 @@
+name: br-release
+
+# Builds and publishes the br fork's release artifacts (container image and
+# Helm chart) for v*-br tags. Adapted from release.yaml, minus signing,
+# provenance, SBOM, and CLI publication.
+#
+# Note: tags pushed by br-sync use GITHUB_TOKEN and therefore do not trigger
+# the push event; br-sync dispatches this workflow explicitly.
+
+on:
+  push:
+    tags:
+    - 'v*-br'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_REPO: ghcr.io/botresources/kargo
+  CHART_REPO: ghcr.io/botresources/kargo-charts
+
+jobs:
+  publish-image:
+    if: github.repository != 'akuity/kargo'
+    permissions:
+      packages: write # Used to push images to `ghcr.io`
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:3.0.0
+        ports:
+        - 5000:5000
+    steps:
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      with:
+        driver-opts: network=host
+    - name: Login to GHCR
+      uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Checkout
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    - name: Build base image
+      run: |
+        BASE_IMAGE=localhost:5000/kargo-base make build-base-image
+        docker push localhost:5000/kargo-base:latest-arm64
+        docker push localhost:5000/kargo-base:latest-amd64
+    - name: Build and push final image
+      uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+      with:
+        platforms: linux/amd64,linux/arm64
+        build-args: |
+          BASE_IMAGE=localhost:5000/kargo-base
+          VERSION=${{ github.ref_name }}
+          GIT_COMMIT=${{ github.sha }}
+          GIT_TREE_STATE=clean
+        tags: ${{ env.IMAGE_REPO }}:${{ github.ref_name }}
+        push: true
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        provenance: false
+        sbom: false
+
+  publish-charts:
+    if: github.repository != 'akuity/kargo'
+    needs: publish-image
+    permissions:
+      contents: read
+      packages: write # Used to push charts to `ghcr.io`
+    runs-on: ubuntu-latest
+    steps:
+    - name: Set up Helm
+      uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
+      with:
+        version: '3.19.4'
+    - name: Login to GHCR
+      uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Checkout code
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    - name: Publish chart
+      env:
+        HELM_EXPERIMENTAL_OCI: '1'
+        VERSION: ${{ github.ref_name }}
+      run: |
+        CHART_VERSION=$(echo $VERSION | cut -c 2-)
+        cd charts/kargo
+        helm dep up
+        helm package . --version ${CHART_VERSION} --app-version ${VERSION}
+        helm push kargo-${CHART_VERSION}.tgz oci://${CHART_REPO}
+
+  github-release:
+    if: github.repository != 'akuity/kargo'
+    needs: [publish-image, publish-charts]
+    permissions:
+      contents: write # Used to create the release
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    - name: Create GitHub release
+      env:
+        TAG: ${{ github.ref_name }}
+        REPO: ${{ github.repository }}
+      run: |
+        UPSTREAM_TAG="${TAG%-br}"
+        if gh release view "${TAG}" --repo "${REPO}" > /dev/null 2>&1
+        then
+          echo "Release ${TAG} already exists"
+          exit 0
+        fi
+        cat > notes.md <<EOF
+        br build of upstream release [${UPSTREAM_TAG}](https://github.com/akuity/kargo/releases/tag/${UPSTREAM_TAG}).
+
+        Artifacts:
+        - Image: \`${IMAGE_REPO}:${TAG}\`
+        - Chart: \`oci://${CHART_REPO}/kargo\` version \`${TAG#v}\`
+        EOF
+        gh release create "${TAG}" \
+          --repo "${REPO}" \
+          --verify-tag \
+          --title "${TAG}" \
+          --notes-file notes.md
+
+  issue-on-failure:
+    if: github.repository != 'akuity/kargo' && failure()
+    needs: [publish-image, publish-charts, github-release]
+    permissions:
+      issues: write
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+    - name: Open issue
+      env:
+        TAG: ${{ github.ref_name }}
+        REPO: ${{ github.repository }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        cat > body.md <<EOF
+        The br-release workflow failed for \`${TAG}\`.
+
+        See the [failed run](${RUN_URL}) for logs.
+
+        An agent (or human) should diagnose the failure, fix it on \`br/main\`, re-tag if necessary, and re-run the workflow:
+
+        \`\`\`bash
+        gh workflow run br-release.yaml --repo ${REPO} --ref refs/tags/${TAG}
+        \`\`\`
+        EOF
+        gh issue create \
+          --repo "${REPO}" \
+          --title "br-release failed for ${TAG}" \
+          --body-file body.md
