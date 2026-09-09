@@ -16,15 +16,21 @@ import { useModal } from '../common/modal/use-modal';
 import { getAlias } from '../common/utils';
 import { FreightTable } from '../project/pipelines/freight/freight-table';
 
+import { FreightComparisonBar } from './freight-comparison-bar';
 import { FreightMetadata } from './freight-metadata';
 import { FreightStatusList } from './freight-status-list';
 import { UpdateFreightAliasModal } from './update-freight-alias-modal';
+import { usePreviousFreight } from './use-previous-freight';
 
 export const FreightDetails = ({
   freight,
+  freights,
   refetchFreight
 }: {
   freight?: Freight;
+  // all freight of the project, as fed to the freight timeline; needed to
+  // resolve the previous freight this one is compared with
+  freights?: Freight[];
   refetchFreight: () => void;
 }) => {
   const navigate = useNavigate();
@@ -36,6 +42,8 @@ export const FreightDetails = ({
       setAlias(getAlias(freight));
     }
   }, [freight]);
+
+  const comparison = usePreviousFreight(freight, freights);
 
   const onClose = () => navigate(generatePath(paths.project, { name: projectName }));
   const { show } = useModal();
@@ -141,7 +149,19 @@ export const FreightDetails = ({
                         />
                         <br />
                         <FreightMetadata freight={freight} className='mb-5' />
-                        <FreightTable freight={freight} />
+                        <FreightComparisonBar
+                          className='mb-3'
+                          checked={comparison.highlightChanges}
+                          onChange={comparison.setHighlightChanges}
+                          disabled={!comparison.canToggle}
+                          previousFreight={comparison.previousFreight}
+                        />
+                        <FreightTable
+                          freight={freight}
+                          previousFreight={
+                            comparison.highlightChanges ? comparison.previousFreight : undefined
+                          }
+                        />
                       </div>
                       <FreightStatusList freight={freight} />
                     </>
